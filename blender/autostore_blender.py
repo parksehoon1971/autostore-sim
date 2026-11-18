@@ -376,6 +376,8 @@ def make_building(M, coll):
             box("LightPanel", (1.4, 0.35, 0.05), (x, y, wall_h - 0.4), M["lightpanel"], coll)
             ld = bpy.data.lights.new("HighBay", "AREA"); ld.shape = "RECTANGLE"; ld.size = 1.4; ld.size_y = 0.35
             ld.energy = 550; ld.color = (1.0, 0.96, 0.9)
+            # 그림자는 그리드 위 중앙 3x3 조명만 (EEVEE 그림자 버퍼 초과·속도 저하 방지)
+            ld.use_shadow = abs(ix) <= 1 and abs(iy) <= 1
             lo = bpy.data.objects.new("HighBay", ld); lo.location = (x, y, wall_h - 0.45); link_coll(lo, coll)
 
 # ---------------------------------------------------------------- 내보내기
@@ -433,7 +435,8 @@ def setup_eevee(sc, a):
     for k, v in (("taa_render_samples", int(a["samples"])), ("use_raytracing", True), ("ray_tracing_method", "SCREEN"),
                  ("use_shadows", True), ("shadow_ray_count", 2), ("shadow_step_count", 8),
                  ("use_gtao", True), ("gtao_distance", 1.0), ("fast_gi_method", "GLOBAL_ILLUMINATION"),
-                 ("use_fast_gi", True), ("use_bloom", True), ("bloom_intensity", 0.03), ("volumetric_tile_size", "8")):
+                 ("use_fast_gi", True), ("use_bloom", True), ("bloom_intensity", 0.03), ("volumetric_tile_size", "8"),
+                 ("shadow_pool_size", "1024"), ("shadow_resolution_scale", 0.5)):
         try: setattr(e, k, v)
         except Exception: pass
     try:
