@@ -19,7 +19,9 @@ AutoStore 스타일 큐브 스토리지 — 사실적 Blender 장면 + 시뮬레
   --res WxH          해상도 (기본 1920x1080)
   --samples N        Cycles 샘플 (기본 96)
   --step N           N프레임마다 렌더 (미리보기용, 영상 fps = 30/N)
-  --gpu              GPU 렌더 (OPTIX > CUDA > HIP > METAL 자동)
+  --gpu              GPU 렌더 (OPTIX > CUDA > HIP > ONEAPI > METAL 자동)
+  --engine E         cycles (기본, 사실적) | eevee (GPU 실시간 엔진, 내장 그래픽에서도 빠름)
+  --encode-only      렌더 없이 frames/ 의 PNG만 mp4로 합침 (ffmpeg 없으면 Blender 내장 인코더 사용)
   --no-export        FBX/GLB 내보내기 생략
 
 치수는 공개 자료 기반 근사치입니다(330 mm 빈, 셀 피치 0.70 x 0.50 m). 실제 제품 도면이 아닙니다.
@@ -45,11 +47,12 @@ def parse_args():
     argv = sys.argv
     argv = argv[argv.index("--") + 1:] if "--" in argv else argv[1:]
     a = {"out": "./out", "trace": None, "still": None, "anim": False, "frames": None, "res": "1920x1080",
-         "samples": 96, "gpu": False, "no-export": False, "step": 1}
+         "samples": 96, "gpu": False, "no-export": False, "step": 1,
+         "engine": "cycles", "encode-only": False}
     i = 0
     while i < len(argv):
         k = argv[i].lstrip("-")
-        if k in ("anim", "gpu", "no-export"):
+        if k in ("anim", "gpu", "no-export", "encode-only"):
             a[k] = True; i += 1
         elif k in a:
             a[k] = argv[i + 1]; i += 2
@@ -419,6 +422,27 @@ def setup_camera(scene_coll, frames):
         cam_d.lens = lens; cam_d.keyframe_insert("lens", frame=f)
     return cam
 
+def setup_eevee(sc, a):
+    """EEVEE(Next): 내장 GPU에서도 빠른 래스터 + 스크린스페이스 레이트레이싱"""
+    for eng in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE"):
+        try:
+            sc.render.engine = eng; break
+        except Exception:
+            continue
+    e = sc.eevee
+    for k, v in (("taa_render_samples", int(a["samples"])), ("use_raytracing", True), ("ray_tracing_method", "SCREEN"),
+                 ("use_shadows", True), ("shadow_ray_count", 2), ("shadow_step_count", 8),
+                 ("use_gtao", True), ("gtao_distance", 1.0), ("fast_gi_method", "GLOBAL_ILLUMINATION"),
+                 ("use_fast_gi", True), ("use_bloom", True), ("bloom_intensity", 0.03), ("volumetric_tile_size", "8")):
+        try: setattr(e, k, v)
+        except Exception: pass
+    try:
+        e.ray_tracing_options.resolution_scale = "1"
+        e.ray_tracing_options.use_denoise = True
+    except Exception:
+        pass
+    print("[AutoStore] engine:", sc.render.engine)
+
 def setup_render(out, a, frames, fps):
     sc = bpy.context.scene
     sc.render.engine = "CYCLES"
@@ -459,6 +483,8 @@ def setup_render(out, a, frames, fps):
                 continue
     else:
         sc.cycles.device = "CPU"
+    if a["engine"].lower().startswith("eevee"):
+        setup_eevee(sc, a)
     world = bpy.data.worlds.new("World"); sc.world = world
     world.use_nodes = True
     bg = world.node_tree.nodes["Background"]
@@ -502,6 +528,47 @@ def iter_fcurves(action):
             for bag in getattr(strip, "channelbags", []):
                 out.extend(bag.fcurves)
     return out
+
+def encode_mp4(fdir, mp4, fps, w, h):
+    """PNG 시퀀스 → H.264 MP4. ffmpeg가 있으면 사용, 없으면 Blender 내장 FFmpeg(시퀀서)로 인코딩"""
+    files = sorted(f for f in os.listdir(fdir) if f.startswith("f_") and f.endswith(".png") and os.path.getsize(os.path.join(fdir, f)) > 0)
+    if not files:
+        print("[AutoStore] 인코딩할 프레임 없음"); return
+    ff = shutil.which("ffmpeg")
+    if ff:
+        subprocess.run([ff, "-y", "-f", "concat", "-safe", "0", "-i", _concat_list(fdir, files, fps),
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-r", str(fps), mp4])
+        print("[AutoStore] video (ffmpeg) ->", mp4); return
+    enc = bpy.data.scenes.new("Encode")
+    enc.sequence_editor_create()
+    se = enc.sequence_editor
+    coll = se.strips if hasattr(se, "strips") else se.sequences
+    strip = coll.new_image(name="frames", filepath=os.path.join(fdir, files[0]), channel=1, frame_start=1)
+    for f in files[1:]:
+        strip.elements.append(f)
+    enc.frame_start, enc.frame_end = 1, len(files)
+    r = enc.render
+    r.resolution_x, r.resolution_y, r.resolution_percentage = w, h, 100
+    r.fps = int(round(fps)); r.fps_base = r.fps / fps
+    ims = r.image_settings
+    try: ims.media_type = "VIDEO"           # Blender 5.x
+    except Exception: pass
+    ims.file_format = "FFMPEG"
+    r.ffmpeg.format = "MPEG4"; r.ffmpeg.codec = "H264"
+    try: r.ffmpeg.constant_rate_factor = "HIGH"
+    except Exception: pass
+    try: enc.view_settings.view_transform = "Standard"
+    except Exception: pass
+    r.filepath = mp4
+    bpy.ops.render.render(animation=True, scene=enc.name)
+    print("[AutoStore] video (Blender 내장 인코더) ->", mp4)
+
+def _concat_list(fdir, files, fps):
+    p = os.path.join(fdir, "_list.txt")
+    with open(p, "w") as fh:
+        for f in files:
+            fh.write(f"file '{os.path.join(fdir, f)}'\nduration {1.0 / fps}\n")
+    return p
 
 # ---------------------------------------------------------------- 메인
 def main():
@@ -576,15 +643,9 @@ def main():
         sc.render.filepath = os.path.join(fdir, "f_")
         sc.render.use_overwrite = False; sc.render.use_placeholder = True   # 여러 프로세스 병렬 렌더/이어하기 가능
         step = int(a["step"]); sc.frame_step = step
-        bpy.ops.render.render(animation=True)
-        ff = shutil.which("ffmpeg")
-        if ff:
-            mp4 = os.path.join(out, "autostore_30s.mp4")
-            subprocess.run([ff, "-y", "-framerate", str(fps / step), "-pattern_type", "glob", "-i", os.path.join(fdir, "f_*.png"),
-                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", mp4])
-            print("[AutoStore] video ->", mp4)
-        else:
-            print("[AutoStore] ffmpeg 없음: frames/ 폴더의 PNG를 영상 편집기로 합치세요")
+        if not a["encode-only"]:
+            bpy.ops.render.render(animation=True)
+        encode_mp4(fdir, os.path.join(out, "autostore_30s.mp4"), fps / step, sc.render.resolution_x, sc.render.resolution_y)
     print("[AutoStore] done ->", out)
 
 if __name__ == "__main__":
