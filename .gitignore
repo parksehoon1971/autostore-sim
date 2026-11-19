@@ -24,3 +24,5 @@ blender/out/frames/
 blender/out/libiao/frames/
 # 30초 키프레임이 들어 있어 큼(약 26 MB). 스크립트로 다시 만듦
 blender/out/libiao/*.blend
+blender/out/rapyuta/frames/
+blender/out/rapyuta/*.blend
