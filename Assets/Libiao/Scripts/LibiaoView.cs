@@ -161,8 +161,8 @@ namespace Libiao
                     Lit("SackGreen", new Color(0.10f, 0.38f, 0.20f), 0f, 0.3f),
                 };
                 foreach (var s in sack) { s.SetFloat("_Cull", 0); Weave(s); }
-                wall = Lit("WallPanel", new Color(0.30f, 0.33f, 0.37f), 0.3f, 0.5f);
-                ceiling = Lit("Ceiling", new Color(0.08f, 0.08f, 0.09f), 0f, 0.2f);
+                wall = Lit("WallPanel", new Color(0.45f, 0.48f, 0.52f), 0.2f, 0.45f);
+                ceiling = Lit("Ceiling", new Color(0.22f, 0.22f, 0.24f), 0f, 0.2f);
                 lightPanel = Emissive("LightPanel", new Color(1f, 0.97f, 0.92f), 6f);
                 ledStrip = Emissive("LEDStrip", new Color(1f, 0.98f, 0.95f), 3f);
                 floor = Concrete();
@@ -364,7 +364,7 @@ namespace Libiao
                     var lg = new GameObject("HighBay"); lg.transform.SetParent(env);
                     lg.transform.position = U(cxw + ix * 4.5f, cyw + iy * 4.5f, Hh - 0.5f); lg.transform.rotation = Quaternion.Euler(90, 0, 0);
                     var l = lg.AddComponent<Light>(); l.type = LightType.Spot; l.spotAngle = 130; l.innerSpotAngle = 60;
-                    l.range = 25; l.intensity = 7f; l.color = new Color(1f, 0.95f, 0.88f);
+                    l.range = 30; l.intensity = 14f; l.color = new Color(1f, 0.95f, 0.88f);
                     l.shadows = shadowed++ < 4 ? LightShadows.Soft : LightShadows.None;
                 }
             var sun = new GameObject("KeyLight").AddComponent<Light>();
@@ -373,9 +373,9 @@ namespace Libiao
             sun.transform.rotation = Quaternion.Euler(55, -35, 0);
             RenderSettings.sun = sun;
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.42f, 0.44f, 0.48f);
-            RenderSettings.ambientEquatorColor = new Color(0.30f, 0.31f, 0.33f);
-            RenderSettings.ambientGroundColor = new Color(0.16f, 0.16f, 0.16f);
+            RenderSettings.ambientSkyColor = new Color(0.62f, 0.64f, 0.68f);
+            RenderSettings.ambientEquatorColor = new Color(0.50f, 0.51f, 0.53f);
+            RenderSettings.ambientGroundColor = new Color(0.30f, 0.30f, 0.30f);
             RenderSettings.skybox = null;
             var pg = new GameObject("ReflectionProbe"); pg.transform.position = U(cxw, cyw, 4f);
             var probe = pg.AddComponent<ReflectionProbe>();
@@ -468,7 +468,7 @@ namespace Libiao
                     lg.transform.position = U(W * (k + 0.5f) / 4, Cy(j) + 0.12f, Z - DeckT - 0.22f);
                     lg.transform.rotation = Quaternion.Euler(90, 0, 0);
                     var l = lg.AddComponent<Light>(); l.type = LightType.Spot; l.spotAngle = 150; l.innerSpotAngle = 90;
-                    l.range = 4.5f; l.intensity = 1.6f; l.color = new Color(1f, 0.97f, 0.92f); l.shadows = LightShadows.None;
+                    l.range = 5f; l.intensity = 3f; l.color = new Color(1f, 0.97f, 0.92f); l.shadows = LightShadows.None;
                 }
             }
             led.Build("UnderDeckLEDs", root, false);
@@ -714,7 +714,7 @@ namespace Libiao
             var prof = ScriptableObject.CreateInstance<VolumeProfile>();
             var tm = prof.Add<Tonemapping>(true); tm.mode.Override(TonemappingMode.ACES);
             var bl = prof.Add<Bloom>(true); bl.intensity.Override(0.5f); bl.threshold.Override(1.0f); bl.scatter.Override(0.65f);
-            var ca = prof.Add<ColorAdjustments>(true); ca.postExposure.Override(0.3f); ca.contrast.Override(12f); ca.saturation.Override(-2f);
+            var ca = prof.Add<ColorAdjustments>(true); ca.postExposure.Override(0.8f); ca.contrast.Override(12f); ca.saturation.Override(-2f);
             var vg = prof.Add<Vignette>(true); vg.intensity.Override(0.22f); vg.smoothness.Override(0.45f);
             var dof = prof.Add<DepthOfField>(true); dof.mode.Override(DepthOfFieldMode.Bokeh);
             dof.focusDistance.Override(8f); dof.focalLength.Override(28f); dof.aperture.Override(5.6f);

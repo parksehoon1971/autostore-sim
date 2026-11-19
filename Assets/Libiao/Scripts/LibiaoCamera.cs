@@ -57,6 +57,12 @@ namespace Libiao
             return 0.5f * (2f * p1 + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
         }
 
+        // 축마다 두 키 사이로 제한 (곡선이 키 밖으로 튀어 자루·기둥에 닿지 않게. Blender 의 auto-clamped 보간과 비슷)
+        static Vector3 Clamp(Vector3 v, Vector3 a, Vector3 b) =>
+            new Vector3(Mathf.Clamp(v.x, Mathf.Min(a.x, b.x), Mathf.Max(a.x, b.x)),
+                        Mathf.Clamp(v.y, Mathf.Min(a.y, b.y), Mathf.Max(a.y, b.y)),
+                        Mathf.Clamp(v.z, Mathf.Min(a.z, b.z), Mathf.Max(a.z, b.z)));
+
         void LateUpdate()
         {
             if (view == null || view.Sim == null) return;
@@ -72,8 +78,8 @@ namespace Libiao
                 // 구간 사이 속도가 이어지도록 선형 파라미터 + 처음/끝만 부드럽게
                 float s = Mathf.InverseLerp(k1.f, k2.f, u);
                 if (i == 0) s = Mathf.SmoothStep(0, 1, s * 0.5f) * 2f;
-                transform.position = CatmullRom(k0.pos, k1.pos, k2.pos, k3.pos, s);
-                var look = CatmullRom(k0.look, k1.look, k2.look, k3.look, s);
+                transform.position = Clamp(CatmullRom(k0.pos, k1.pos, k2.pos, k3.pos, s), k1.pos, k2.pos);
+                var look = Clamp(CatmullRom(k0.look, k1.look, k2.look, k3.look, s), k1.look, k2.look);
                 transform.rotation = Quaternion.LookRotation(look - transform.position, Vector3.up);
                 cam.focalLength = Mathf.Lerp(k1.lens, k2.lens, Mathf.SmoothStep(0, 1, s));
                 if (target) target.position = look;
