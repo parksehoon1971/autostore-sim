@@ -23,6 +23,9 @@ namespace AutoStore
 
         public AutoStoreSim Sim { get; private set; }
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
         public Transform FocusTarget { get; private set; }
 
         readonly List<Transform> robotT = new List<Transform>();
@@ -40,12 +43,12 @@ namespace AutoStore
             for (double t = 0; t < warmupSeconds; t += 0.05) Sim.Step(0.05);
             topY = (float)Sim.topZ;
             M = new Mats();
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             BuildGrid();
             BuildPorts();
             BuildBins();
             BuildRobots();
-            BuildCameraAndPost();
+            if (!moduleMode) BuildCameraAndPost();
             SyncAll(true);
             var probe = FindFirstObjectByType<ReflectionProbe>();
             if (probe) probe.RenderProbe();
@@ -56,11 +59,13 @@ namespace AutoStore
             float dt = Time.deltaTime * simSpeed;
             int n = Mathf.Max(1, Mathf.CeilToInt(dt / subStep));
             for (int i = 0; i < n; i++) Sim.Step(dt / n);
+            UOff = moduleMode ? transform.position : Vector3.zero;
             SyncAll(false);
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동기화
-        static Vector3 U(double x, double h, double y) => new Vector3((float)x, (float)h, (float)y);
+        static Vector3 U(double x, double h, double y) => UOff + new Vector3((float)x, (float)h, (float)y);
 
         void SyncAll(bool force)
         {

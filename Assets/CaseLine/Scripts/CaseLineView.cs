@@ -23,6 +23,9 @@ namespace CaseLine
         public bool showHud = true;
 
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
         public double T { get; private set; }
 
         Mats M;
@@ -42,17 +45,18 @@ namespace CaseLine
             public Transform[] packs = new Transform[8];
         }
 
-        public static Vector3 U(double x, double y, double z) => new Vector3((float)x, (float)z, (float)y);
+        public static Vector3 U(double x, double y, double z) => UOff + new Vector3((float)x, (float)z, (float)y);
         public static Vector3 U(D3 v) => U(v.x, v.y, v.z);
+        static Vector3 Dir(D3 v) => new Vector3((float)v.x, (float)v.z, (float)v.y);   // 방향 벡터 (위치 오프셋 없음)
 
         // ------------------------------------------------------------------ 시작
         void Start()
         {
             M = new Mats();
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             LoadEquipment();
             boxParent = new GameObject("Boxes").transform;
-            BuildCameraAndPost();
+            if (!moduleMode) BuildCameraAndPost();
             ResetClock();
             Apply();
             var probe = FindFirstObjectByType<ReflectionProbe>();
@@ -64,7 +68,9 @@ namespace CaseLine
         void Update()
         {
             clock += Time.deltaTime * speed;
+            UOff = moduleMode ? transform.position : Vector3.zero;
             Apply();
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동작 적용
@@ -103,7 +109,7 @@ namespace CaseLine
             {
                 var s = slabs[i]; var tr = rig.slabs[i];
                 tr.position = U(root + s.center);
-                tr.rotation = Quaternion.LookRotation(U(s.ez), U(s.ey));
+                tr.rotation = Quaternion.LookRotation(Dir(s.ez), Dir(s.ey));
                 tr.localScale = new Vector3((float)s.size.x, (float)s.size.y, (float)s.size.z);
             }
             var tp = K.TapeParts(tt);
@@ -114,7 +120,7 @@ namespace CaseLine
                 tr.gameObject.SetActive(on);
                 if (!on) continue;
                 tr.position = U(root + p.center);
-                tr.localScale = U(p.size);
+                tr.localScale = Dir(p.size);
             }
             for (int j = 0; j < 8; j++)
             {
@@ -141,8 +147,8 @@ namespace CaseLine
             {
                 var g = new GameObject("Pack" + j); g.transform.SetParent(rig.root.transform, false);
                 int v = rnd.Next(4);
-                Cube("Body", U(P.x - 0.002, P.y - 0.002, P.z - 0.002), Vector3.zero, M.prod[v], g.transform);
-                Cube("Band", U(P.x, P.y, 0.03), U(0, 0, P.z * 0.18), v == 0 ? M.prod[1] : M.prod[0], g.transform, false);
+                Cube("Body", Dir(new D3(P.x - 0.002, P.y - 0.002, P.z - 0.002)), Vector3.zero, M.prod[v], g.transform);
+                Cube("Band", Dir(new D3(P.x, P.y, 0.03)), Dir(new D3(0, 0, P.z * 0.18)), v == 0 ? M.prod[1] : M.prod[0], g.transform, false);
                 rig.packs[j] = g.transform;
             }
             return rig;

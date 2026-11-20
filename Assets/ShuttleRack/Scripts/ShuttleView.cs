@@ -27,6 +27,9 @@ namespace ShuttleRack
 
         public ShuttleSim Sim { get; private set; }
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
 
         // 장면 치수 (Blender 스크립트와 같은 값)
         public const float UprX = 0.05f, UprY = 0.07f, ShL = 0.86f, ShW = 0.66f, ShH = 0.12f, MastX = 0.78f, MastY = 0.62f;
@@ -43,7 +46,7 @@ namespace ShuttleRack
         double acc;
 
         // ------------------------------------------------------------------ 좌표 변환
-        public static Vector3 U(double x, double y, double z) => new Vector3((float)x, (float)z, (float)y);
+        public static Vector3 U(double x, double y, double z) => UOff + new Vector3((float)x, (float)z, (float)y);
         float Wx(int b) => (float)Sim.Wx(b);
         float AisleY(int a) => (float)Sim.AisleY(a);
         float LevelZ(int l) => (float)Sim.LevelZ(l);
@@ -63,14 +66,14 @@ namespace ShuttleRack
             cubeMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
             tmp = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             cylMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             BuildRacks();
             BuildFront();
             BuildFloorMarks();
             BuildShuttles();
             BuildCarriages();
             BuildTotes();
-            BuildCameraAndPost();
+            if (!moduleMode) BuildCameraAndPost();
             SyncAll();
             var probe = FindFirstObjectByType<ReflectionProbe>();
             if (probe) probe.RenderProbe();
@@ -81,7 +84,9 @@ namespace ShuttleRack
             acc += Time.deltaTime * simSpeed;
             int guard = 0;
             while (acc >= subStep - 1e-6 && guard++ < 2000) { Sim.Step(subStep); acc -= subStep; }
+            UOff = moduleMode ? transform.position : Vector3.zero;
             SyncAll();
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동기화

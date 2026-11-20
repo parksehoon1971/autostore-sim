@@ -27,6 +27,9 @@ namespace StackerCrane
 
         public StackerCraneSim Sim { get; private set; }
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
         /// <summary>영상 기준 시간 (워밍업 끝 = 0)</summary>
         public float MovieTime => Sim == null ? 0f : (float)(Sim.t - warmupSeconds);
 
@@ -43,7 +46,7 @@ namespace StackerCrane
         double acc;
 
         // ------------------------------------------------------------------ 좌표 / 치수
-        public static Vector3 U(double x, double y, double z) => new Vector3((float)x, (float)z, (float)y);
+        public static Vector3 U(double x, double y, double z) => UOff + new Vector3((float)x, (float)z, (float)y);
         float GW => config.nx * (float)config.slotW;
         float Depth => (float)Sim.depthY;
         float TopZ => (float)Sim.LevelZ(config.levels - 1) + 1.75f;
@@ -63,14 +66,14 @@ namespace StackerCrane
             cubeMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
             tmp = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             cylMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             BuildRacks();
             BuildConveyors();
             BuildFloorMarks();
             BuildCranes();
             BuildPallets();
-            BuildCameraAndPost();
-            if (showCaptions) gameObject.AddComponent<StackerCraneCaption>().Init(this, Cam);
+            if (!moduleMode) BuildCameraAndPost();
+            if (showCaptions && !moduleMode) gameObject.AddComponent<StackerCraneCaption>().Init(this, Cam);
             SyncAll();
             var probe = FindFirstObjectByType<ReflectionProbe>();
             if (probe) probe.RenderProbe();
@@ -81,7 +84,9 @@ namespace StackerCrane
             acc += Time.deltaTime * simSpeed;
             int guard = 0;
             while (acc >= subStep - 1e-6 && guard++ < 2000) { Sim.Step(subStep); acc -= subStep; }
+            UOff = moduleMode ? transform.position : Vector3.zero;
             SyncAll();
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동기화 (월드 좌표로 직접 놓아 FBX 축 변환과 무관하게)

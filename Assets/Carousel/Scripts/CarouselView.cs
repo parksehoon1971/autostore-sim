@@ -27,6 +27,9 @@ namespace Carousel
 
         public CarouselSim Sim { get; private set; }
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
 
         const float GAP = 0.002f;
 
@@ -40,7 +43,7 @@ namespace Carousel
         double acc;
 
         // ------------------------------------------------------------------ 좌표 / 치수 (blender 와 같은 식)
-        public static Vector3 U(double x, double y, double z) => new Vector3((float)x, (float)z, (float)y);
+        public static Vector3 U(double x, double y, double z) => UOff + new Vector3((float)x, (float)z, (float)y);
         float HShelfZ(int l) => (float)(config.hShelf0 + l * config.hShelfH);
         float HBinX(int b) => (float)((b - (config.hBins - 1) / 2.0) * (config.hW - 0.02) / config.hBins);
         float VBinX(int b) => (float)(-config.vW / 2 + 0.05 + (b + 0.5) * (config.vW - 0.10) / config.vBins);
@@ -61,11 +64,11 @@ namespace Carousel
             cubeMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
             tmp = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             cylMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             BuildHorizontal();
             BuildVertical();
             BuildCarriers();
-            BuildCameraAndPost();
+            if (!moduleMode) BuildCameraAndPost();
             SyncAll();
             var probe = FindFirstObjectByType<ReflectionProbe>();
             if (probe) probe.RenderProbe();
@@ -76,7 +79,9 @@ namespace Carousel
             acc += Time.deltaTime * simSpeed;
             int guard = 0;
             while (acc >= subStep - 1e-6 && guard++ < 2000) { Sim.Step(subStep); acc -= subStep; }
+            UOff = moduleMode ? transform.position : Vector3.zero;
             SyncAll();
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동기화

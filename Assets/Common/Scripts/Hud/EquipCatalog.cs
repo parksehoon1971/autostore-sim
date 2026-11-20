@@ -215,7 +215,7 @@ namespace EquipFX
                 var b = new B<global::CaseLine.CaseLineView>(L, "caseline", "Case Erect · Seal Line", "반자동 제함 → 충전 → 봉함", "포장 라인",
                     "로봇 팔이 납작한 박스를 세워 제함하고, 컨베이어를 따라 제품을 채운 뒤 테이프로 봉함합니다.",
                     ScenePaths.CaseLine, "CaseLine", typeof(global::CaseLine.CaseLineMovieCapture), "CaseLine.EditorTools.CaseLineMenu", "box/h");
-                b.Core(v => v.Cam != null, v => v.T, v => 3600.0 / global::CaseLine.K.PERIOD, v => CaseDone(v.T), v => 1);
+                b.Core(v => v.Cam != null || v.moduleMode, v => v.T, v => 3600.0 / global::CaseLine.K.PERIOD, v => CaseDone(v.T), v => 1);
                 b.K("박스 규격", "mm", v => $"{(global::CaseLine.K.L * 1000):0}×{(global::CaseLine.K.W * 1000):0}×{(global::CaseLine.K.H * 1000):0}");
                 b.K("투입 간격", "s", v => global::CaseLine.K.PERIOD.ToString("0.0"));
                 b.K("컨베이어", "m/min", v => (global::CaseLine.K.V * 60).ToString("0"));
