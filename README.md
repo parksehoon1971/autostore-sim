@@ -424,16 +424,16 @@ blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace 
 | `web/stackercrane-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
 | `tools/export_stackercrane_trace.js` | 시뮬레이션 → Blender 궤적 `blender/stackercrane_trace.json` |
 | `blender/stackercrane_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
-| `blender/out/stackercrane/` | 크레인·팔레트 FBX/GLB, 렌더 이미지 |
+| `blender/out/stackercrane/` | 크레인·팔레트 FBX/GLB (다른 도구용), 렌더 이미지. Unity 는 FBX 를 쓰지 않고 같은 형상을 코드로 만듭니다 |
 | `Assets/StackerCrane/Scripts/StackerCraneSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
 | `Assets/StackerCrane/Scripts/StackerCraneView.cs` | 랙·레일·컨베이어·크레인·팔레트·조명·후처리 자동 구성, HUD |
 | `Assets/StackerCrane/Scripts/StackerCraneCamera.cs` | Blender와 같은 30초 카메라 동선 (크레인을 따라 달리는 구간 포함) / 마우스 오비트 |
 | `Assets/StackerCrane/Scripts/StackerCraneCaption.cs` | 장비명 타이틀·단계 자막·실시간 속도 표시 (영상에 함께 녹화) |
-| `Assets/StackerCrane/Scripts/StackerCraneMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/StackerCrane/Scripts/StackerCraneMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더, FHD 2배 슈퍼샘플링 / 4K) |
 | `Assets/StackerCrane/Editor/StackerCraneMenu.cs` | `애니메이션 → 스태커크레인` 메뉴 |
 | `docs/stackercrane-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과, 영상 동선 |
 
-**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 스태커크레인 → Open Stacker Crane Scene** → **Play**. 30초 영상은 **애니메이션 → 스태커크레인 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/stackercrane_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(624초 워밍업 직후, seed 6)에서 시작해 같은 장면·카메라·자막이 나옵니다.
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 스태커크레인 → Open Stacker Crane Scene** → **Play**. 30초 영상은 **애니메이션 → 스태커크레인 → Record 30s Movie (FHD 1920x1080, 2x 슈퍼샘플링)** → `Recordings/stackercrane_unity_30s.mp4`, 또는 **Record 30s Movie (4K 3840x2160)** → `Recordings/stackercrane_unity_30s_4k.mp4`. FHD 는 3840x2160 으로 렌더한 뒤 줄여 저장해 계단 현상과 얇은 선의 반짝임이 적고, 녹화 동안만 그림자 거리 90 m·그림자 맵 4096 으로 올립니다 (원본 URP 설정 파일은 바뀌지 않음). 고정 30fps 프레임 단위 녹화라 GPU 가 약하면 시간이 더 걸릴 뿐 결과는 같습니다. 녹화는 Blender 궤적과 같은 시점(624초 워밍업 직후, seed 6)에서 시작해 같은 장면·카메라·자막이 나옵니다.
 
 **Blender** (저장소 루트에서):
 

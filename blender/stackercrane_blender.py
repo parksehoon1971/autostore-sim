@@ -399,14 +399,14 @@ def make_racks(M, coll):
         for xe, s in ((RAIL_X0, -1), (RAIL_X1, 1)):
             R.box((0.30, 0.40, 0.55), (xe + s * 0.15, ya, 0.275), M["safetyYellow"])                 # 끝 멈춤 블록
             R.box((0.15, 0.25, 0.25), (xe - s * 0.07, ya, 0.50), M["black"])                         # 완충기
-        # 앞쪽 (랙 밖 P&D 구간) 상부 레일 지지 문형 프레임
-        for xg in (RAIL_X0 + 0.3,):
-            for sy in (-1, 1):
-                R.box((0.20, 0.20, zt + 0.9), (xg, ya + sy * (C["aisleW"] / 2 + 0.12), (zt + 0.9) / 2), M["upright"])
-            R.box((0.22, C["aisleW"] + 0.5, 0.20), (xg, ya, zt + 0.85), M["upright"])
         R.box((0.0 - RAIL_X0, 0.06, 0.20), (RAIL_X0 / 2, ya, zt + 0.65), M["railSteel"])
         # 위치 레이저 반사판 (앞 끝)
         R.box((0.02, 0.30, 0.30), (RAIL_X0 - 0.35, ya + 0.20, 0.82), M["white"])
+    # 앞쪽 상부 레일 지지 문형 프레임: 랙 바로 앞, 기둥은 난간 바깥 (컨베이어 팔레트·카메라 동선과 겹치지 않게)
+    xg, ya0, ya1, hz = -0.45, -1.1, DEPTH + 1.1, zt + 1.0   # 난간(y=-0.8, DEPTH+0.8) 바깥
+    for yp in (ya0, ya1):
+        R.box((0.25, 0.25, hz), (xg, yp, hz / 2), M["upright"])
+    R.box((0.24, ya1 - ya0 + 0.25, 0.22), (xg, (ya0 + ya1) / 2, zt + 0.865), M["upright"])
     R.build("Rails", coll)
 
 # ---------------------------------------------------------------- 입출고 컨베이어 + 벽
