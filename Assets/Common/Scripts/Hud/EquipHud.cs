@@ -1204,7 +1204,7 @@ namespace EquipFX
             partTitleLbl.text = p.Label;
             partSubLbl.text = $"{p.module.Label} 의 하위 오브젝트  ·  Esc = 설비 전체";
             UpdatePartRows();
-            propBody?.ScrollTo(partCard);
+            (propBody as ScrollView)?.ScrollTo(partCard);
         }
 
         void UpdatePartRows()
