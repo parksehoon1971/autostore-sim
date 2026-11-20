@@ -1,5 +1,5 @@
 // 30초 영상 녹화 (Unity 에디터 내장 MediaEncoder → H.264 MP4). 별도 패키지 불필요.
-// 메뉴 AutoStore > Record 30s Movie 로 실행하면 플레이 모드에 들어가 고정 30fps로 렌더하고 자동 종료합니다.
+// 메뉴 애니메이션 > AutoStore > Record 30s Movie 로 실행하면 플레이 모드에 들어가 고정 30fps로 렌더하고 자동 종료합니다.
 using System.Collections;
 using System.IO;
 using UnityEngine;

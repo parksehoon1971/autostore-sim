@@ -10,7 +10,7 @@ namespace Rapyuta.EditorTools
     {
         public const string ScenePath = "Assets/Rapyuta/Scenes/RapyutaASRS.unity";
 
-        [MenuItem("Rapyuta/Create or Reset ASRS Scene", priority = 1)]
+        [MenuItem("애니메이션/Rapyuta/Create or Reset ASRS Scene", priority = 1)]
         public static void CreateScene()
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
@@ -26,14 +26,14 @@ namespace Rapyuta.EditorTools
             Debug.Log("[Rapyuta] 씬 생성: " + ScenePath + "  ▶ Play 를 누르세요.");
         }
 
-        [MenuItem("Rapyuta/Open ASRS Scene", priority = 2)]
+        [MenuItem("애니메이션/Rapyuta/Open ASRS Scene", priority = 2)]
         public static void OpenScene()
         {
             if (!File.Exists(ScenePath)) CreateScene();
             if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) EditorSceneManager.OpenScene(ScenePath);
         }
 
-        [MenuItem("Rapyuta/Record 30s Movie (MP4, 1920x1080)", priority = 20)]
+        [MenuItem("애니메이션/Rapyuta/Record 30s Movie (MP4, 1920x1080)", priority = 20)]
         public static void Record()
         {
             if (EditorApplication.isPlaying) { Debug.LogWarning("플레이 모드를 먼저 종료하세요."); return; }
@@ -42,7 +42,7 @@ namespace Rapyuta.EditorTools
             EditorApplication.isPlaying = true;
         }
 
-        [MenuItem("Rapyuta/Open Recordings Folder", priority = 21)]
+        [MenuItem("애니메이션/Rapyuta/Open Recordings Folder", priority = 21)]
         public static void OpenRecordings()
         {
             var p = Path.GetFullPath("Recordings"); Directory.CreateDirectory(p); EditorUtility.RevealInFinder(p);
