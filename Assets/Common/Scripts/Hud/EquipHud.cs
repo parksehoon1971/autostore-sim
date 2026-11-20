@@ -782,7 +782,7 @@ namespace EquipFX
             cargoChip.tooltip = "물류센터가 다루는 화물 바꾸기";
             layoutTools.Add(cargoChip);
             layoutTools.Add(Gap(8));
-            var hint = HudStyle.MakeLabel("끌어다 놓기 · 클릭 선택 · 끌어서 이동 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 가운데 끌기 이동 · 휠 확대", 12, HudStyle.Muted);
+            var hint = HudStyle.MakeLabel("여백 끌기 화면 이동 · 클릭 선택 · 설비 끌어 옮기기 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 휠 확대", 12, HudStyle.Muted);
             hint.style.flexGrow = 1; hint.style.overflow = Overflow.Hidden; hint.style.textOverflow = TextOverflow.Ellipsis;
             layoutTools.Add(hint);
             layoutTools.Add(HudStyle.MakeButton("모두 지우기", () => world?.ClearAll()));

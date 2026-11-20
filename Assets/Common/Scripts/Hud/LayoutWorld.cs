@@ -150,6 +150,8 @@ namespace EquipFX
         int dragMover = -1; Mover pressMover; bool moverMoved;
         public bool DraggingMover => dragMover >= 0;
         Vector3 siteStart; bool siteDragging; int pressDoor = -1; bool doorMoved;
+        // 빈 곳(땅 · 건물 바닥)을 눌러 끌면 화면 이동
+        bool pressEmpty, pressOnBuilding, panning; Vector3 panAnchor; float panH;
         public bool Busy => buildQueue.Count > 0 || building;
         public EquipEntry Dragging => dragEntry;
 
@@ -315,6 +317,7 @@ namespace EquipFX
                 if (part != null) pressModule = part.module;
                 pressMouse = inp.mouse;
                 pressDoor = -1; doorMoved = false; pressMover = null; moverMoved = false;
+                pressEmpty = false; panning = false;
                 var mv = part == null ? PickMover(ray) : null;
                 if (mv != null) { pressModule = null; pressMover = mv; SelectMover(mv); }
                 else if (pressModule == null)
@@ -322,11 +325,34 @@ namespace EquipFX
                     // 설비가 아니면: 출입문 → 건물 바닥 → 빈 땅
                     pressDoor = PickDoor(ray);
                     if (pressDoor >= 0) SelectDoor(pressDoor);
-                    else if (onGround && InsideBuilding(gp)) SelectBuilding();
-                    else Select(null);
+                    else
+                    {
+                        // 여백: 끌면 화면 이동, 끌지 않고 떼면 건물 선택(건물 바닥) 또는 선택 해제
+                        pressOnBuilding = onGround && InsideBuilding(gp);
+                        panH = pressOnBuilding ? FloorY : 0f;
+                        pressEmpty = Ground(ray, panH, out panAnchor);
+                        if (!pressOnBuilding) Select(null);
+                    }
                 }
                 else if (pressModule != Selected || part != SelectedPart || BuildingSelected || SelectedDoor >= 0) Select(pressModule, part);
                 if (pressModule != null && onGround) { moveStartPos = pressModule.transform.position; grabOffset = pressModule.transform.position - gp; }
+            }
+            // 여백 끌기: 누른 땅 점이 마우스를 따라오도록 화면 이동
+            if (inp.lHeld && pressEmpty)
+            {
+                if (!panning && (inp.mouse - pressMouse).magnitude > 4f) panning = true;
+                if (panning && Ground(ray, panH, out var ph))
+                {
+                    var dlt = panAnchor - ph; dlt.y = 0;
+                    focus += dlt;
+                    focus.x = Mathf.Clamp(focus.x, FloorX0, FloorX0 + floorW); focus.z = Mathf.Clamp(focus.z, FloorZ0, FloorZ0 + floorD);
+                    UpdateCamera(false);
+                }
+            }
+            if (inp.lUp && pressEmpty)
+            {
+                if (!panning && pressOnBuilding) SelectBuilding();
+                pressEmpty = false; panning = false;
             }
             // 하역 수단 끌어서 옮기기
             if (inp.lHeld && pressMover != null && onGround && (moverMoved || (inp.mouse - pressMouse).magnitude > 6f))
