@@ -240,3 +240,201 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 - 샷 시점은 각 장면 시뮬레이션을 기본 설정으로 돌려 실제 동작(등반, 인출, 리프트, 투하 등) 시각에 맞췄습니다. 설정을 바꾸면 추적 샷은 같은 번호 로봇을 계속 따라갑니다.
 - AutoStore 로봇: 상판에 흰 번호(01~08), 도장을 밝은 빨강으로.
 - Blender 스크립트의 카메라(CAM_KEYS)는 바꾸지 않았습니다. 최종 영상은 Unity 녹화 메뉴를 쓰세요.
+
+
+---
+
+# Libiao T-Sort 핑거형 로봇 소터 — 같은 방식의 장면
+
+넓은 메인 데크에서 빗살처럼 뻗은 핑거 6개 위를 노란 로봇 30대가 달립니다. 왼쪽 투입 스테이션 4곳에서 작업자가 스캔한 소포를 받아 목적지 슈트 옆까지 가서 트레이를 기울이면, 소포가 핑거 사이 틈으로 떨어져 바닥의 슈트 통(168개)에 쌓입니다. 핑거는 나가는 차선과 돌아오는 차선 2차선이고 끝에서 U턴합니다. 같은 Unity 프로젝트 안에 **애니메이션 → T-Sorter** 메뉴로 들어 있습니다. 기존 Libiao 장면(격자형 데크 + 아래층 자루)과는 다른, 공식 T-Sort 솔루션 그림의 핑거형 플랫폼입니다.
+
+![T-Sort 핑거 사이 틈](docs/images/tsorter_gap.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/tsorter-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_tsorter_trace.js` | 시뮬레이션 → Blender 궤적 `blender/tsorter_trace.json` |
+| `blender/tsorter_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/tsorter/` | 로봇·슈트 통·소포 FBX, 로봇 GLB, 렌더 이미지 |
+| `Assets/TSorter/Scripts/TSorterSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/TSorter/Scripts/TSorterView.cs` | 데크·핑거·슈트·통·스테이션·충전 파일·로봇·소포·조명·후처리 자동 구성, HUD |
+| `Assets/TSorter/Scripts/TSorterCamera.cs` | Blender와 같은 30초 카메라 동선 (트래킹·틈 안·크레인 샷) / 마우스 오비트 |
+| `Assets/TSorter/Scripts/TSorterCaption.cs` | 장비 이름 캡션 (타이틀 → 장면별 챕터 → 엔드 카드), 녹화 프레임에 합성 |
+| `Assets/TSorter/Scripts/TSorterMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/TSorter/Editor/TSorterMenu.cs` | `애니메이션 → T-Sorter` 메뉴 |
+| `docs/tsorter-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: GitHub에서 PR을 머지한 뒤 `git pull`, 프로젝트를 열고 메뉴 **애니메이션 → T-Sorter → Open T-Sorter Scene** → **Play**. 30초 영상은 **애니메이션 → T-Sorter → Record 30s Movie (MP4, 1920x1080)** → `Recordings/tsorter_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(600초 워밍업 직후, seed 3)에서 시작합니다. 캡션은 씬의 `TSorterView` → `Show Caption` 으로 끌 수 있습니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --still 520 --gpu
+
+# 30초 영상 (1920x1080, 30fps). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_tsorter_trace.js --robots 20 --seed 5  (카메라 동선은 seed 3, warmup 600 기준)
+```
+
+결과: 로봇 30대에서 시간당 약 2,150건 (공개 프로필 "2000 Parts per hour" 와 비슷한 규모). 핑거형 플랫폼 구성, 투입 스테이션 수동 투입 + 자동 스캔, 로봇 480×380×230 mm는 공개 자료이고 셀 피치·데크 높이·핑거 길이·속도·슈트 통 크기는 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/tsorter-research.md](docs/tsorter-research.md).
+
+
+---
+
+# 셔틀랙 (다층 토트 셔틀 AS/RS) — 같은 방식의 장면
+
+높이 6.5 m, 14단 랙 통로 3개에서 단마다 셔틀 1대(모두 42대)가 레일을 따라 최고 4 m/s로 달리며 텔레스코픽 암으로 토트를 꺼내 앞쪽 출고 버퍼에 내려놓습니다. 통로 앞 리프트가 토트를 1층 컨베이어로 내리고, 컨베이어가 피킹 스테이션으로 가져간 뒤 입고 리프트를 거쳐 다시 랙에 넣습니다. 특정 제조사 제품이 아닌 일반 구성이며 로고가 없습니다. 같은 Unity 프로젝트 안에 **애니메이션 → 셔틀랙** 메뉴로 들어 있습니다.
+
+![셔틀랙 통로 입구](docs/images/shuttle_aisle.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/shuttle-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_shuttle_trace.js` | 시뮬레이션 → Blender 궤적 `blender/shuttle_trace.json` + 카메라 동선 `Assets/ShuttleRack/Resources/ShuttleCamera.json` |
+| `blender/shuttle_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/shuttle/` | 셔틀·리프트 캐리지·토트 FBX/GLB, 렌더 이미지 |
+| `Assets/ShuttleRack/Scripts/ShuttleSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/ShuttleRack/Scripts/ShuttleView.cs` | 랙·레일·버퍼·리프트 탑·컨베이어·스테이션·셔틀·토트·조명·후처리 자동 구성, HUD |
+| `Assets/ShuttleRack/Scripts/ShuttleCamera.cs` | Blender와 같은 30초 카메라 (토트 하나를 따라감) / 마우스 오비트 |
+| `Assets/ShuttleRack/Scripts/ShuttleCaption.cs` | 장비 이름·단계 자막 (녹화 프레임에 합성) |
+| `Assets/ShuttleRack/Scripts/ShuttleMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/ShuttleRack/Editor/ShuttleMenu.cs` | `애니메이션 → 셔틀랙` 메뉴 |
+| `docs/shuttle-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과, 영상 동선 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 셔틀랙 → Open Shuttle Rack Scene** → **Play**. 30초 영상은 **애니메이션 → 셔틀랙 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/shuttlerack_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1,200초 워밍업 직후, seed 3)에서 시작하고, 카메라가 10단 토트 하나를 셔틀 → 출고 버퍼 → 리프트 → 컨베이어 → 스테이션까지 따라갑니다. 장비 이름과 단계 자막이 영상에 들어갑니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (400 = 통로 입구, 470 = 리프트, 700 = 스테이션)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --still 400,470,700
+
+# 30초 영상 (GPU가 없으면 EEVEE: --engine eevee --samples 16 --res 1280x720)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_shuttle_trace.js --seed 5 --warmup 900  (카메라는 새 주인공 토트에 맞춰 다시 계산됨)
+```
+
+결과: 셔틀 42대, 리프트 6대, 스테이션 3곳에서 약 1,800 토트/h, 평균 리드타임 32초. 병목은 리프트(가동률 73%)이고 셔틀 가동률은 19%입니다. 셔틀 4 m/s·2 m/s², 토트 600×400 mm는 공개 자료의 일반적인 값이고 리프트 속도·단 간격·버퍼 길이 등은 가정입니다. 자세한 내용은 [docs/shuttle-research.md](docs/shuttle-research.md).
+
+
+---
+
+# Libiao AirRob — 같은 방식의 장면 (랙 면 레일 로봇 + 바닥 이송 로봇)
+
+통로 4개, 높이 약 6 m 랙 양쪽 면을 따라 AirRob 4대가 바닥·위 레일 위에서 수평 2 m/s, 수직 1 m/s로 동시에 움직이며 양방향 훅으로 토트를 당겨 옵니다. 꺼낸 토트를 그 칸 바로 아래까지 내려, 랙 맨 아래 터널에서 기다리는 바닥 로봇 위로 밀어 줍니다. 바닥 로봇 16대가 토트를 작업 스테이션 2곳으로 나르고, 피킹 뒤 같은 칸 아래로 돌아와 AirRob 에 돌려줍니다. 같은 Unity 프로젝트 안에 **애니메이션 → AirRob** 메뉴로 들어 있습니다.
+
+![AirRob 훅으로 맨 위 단 토트 당기기](docs/images/airrob_hook.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/airrob-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_airrob_trace.js` | 시뮬레이션 → Blender 궤적 `blender/airrob_trace.json` |
+| `blender/airrob_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/airrob/` | AirRob·바닥 로봇·토트 FBX/GLB, 렌더 이미지 |
+| `Assets/AirRob/Scripts/AirRobSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/AirRob/Scripts/AirRobView.cs` | 랙·레일·스테이션·펜스·AirRob·바닥 로봇·토트·조명·후처리 자동 구성, HUD |
+| `Assets/AirRob/Scripts/AirRobCamera.cs` | Blender와 같은 30초 카메라 동선 (동작 근접 샷) / 마우스 오비트 |
+| `Assets/AirRob/Scripts/AirRobCaption.cs` | 장비명 캡션 오버레이 (영상에도 들어감) |
+| `Assets/AirRob/Scripts/AirRobMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/AirRob/Editor/AirRobMenu.cs` | `애니메이션 → AirRob` 메뉴 |
+| `docs/airrob-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → AirRob → Open AirRob Scene** → **Play**. 30초 영상은 **애니메이션 → AirRob → Record 30s Movie (MP4, 1920x1080)** → `Recordings/airrob_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1342초 워밍업 직후, seed 3)에서 시작해 같은 장면이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (360 프레임 = 맨 위 단에서 훅으로 토트 당기기)
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --still 360
+
+# 30초 영상 (GPU 권장). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_airrob_trace.js --bots 12 --seed 5  (카메라 동선은 seed 3, warmup 1342 기준)
+```
+
+결과: 바닥 로봇 16대, 주문 360 /h 에서 약 320 토트/h, 평균 리드타임 약 190초, AirRob 가동률 72%. 통로 4개에서 약 380 토트/h가 한계이고 병목은 AirRob 입니다. AirRob 폭 764 mm·깊이 820 mm, 수평 2 m/s·수직 1 m/s, 당기기·밀기 4.5 s, 토트 530×410 mm, 통로 850 mm는 공개 수치이고 마스트·훅 형상, 바닥 로봇, 단 간격, 색은 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/airrob-research.md](docs/airrob-research.md).
+
+
+---
+
+# 캐러셀 (수평형 + 수직형) — 같은 방식의 장면
+
+한 장면에 두 가지 회전 선반을 나란히 놓았습니다. 왼쪽은 **수평형 캐러셀** 2대로 이루어진 피킹 포드입니다. 타원 궤도를 도는 6단 선반 캐리어 26개가 가까운 방향으로 돌아 목표 캐리어를 앞쪽 끝(피킹면)에 세우고, 작업자 한 명이 한 대에서 꺼내는 동안 다른 한 대는 다음 캐리어로 미리 돌아갑니다. 오른쪽은 **수직형 캐러셀**로, 높이 약 6.9 m 캐비닛 안에서 폭 2.45 m 트레이 20개가 위아래로 순환하며 목표 트레이를 허리 높이 작업창에 세웁니다. 두 장비 모두 피킹 라이트가 꺼낼 칸을, 풋 라이트가 넣을 주문 토트를 가리킵니다. 영상에는 장비 이름 자막이 들어가며, 같은 Unity 프로젝트 안에 **애니메이션 → 캐러셀** 메뉴로 들어 있습니다.
+
+![수평형 캐러셀 피킹 포드](docs/images/carousel_horizontal.png)
+
+![수직형 캐러셀 작업창](docs/images/carousel_vertical_window.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/carousel-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_carousel_trace.js` | 시뮬레이션 → Blender 궤적 `blender/carousel_trace.json` |
+| `blender/carousel_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR, 자막 합성) |
+| `Assets/Carousel/Scripts/CarouselSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/Carousel/Scripts/CarouselView.cs` | 궤도·캐비닛·캐리어·트레이·피킹 라이트·조명·후처리 자동 구성, HUD |
+| `Assets/Carousel/Scripts/CarouselCamera.cs` | Blender와 같은 30초 카메라 동선 / 마우스 오비트 |
+| `Assets/Carousel/Scripts/CarouselCaption.cs` | 장비 이름 자막 (후처리를 받지 않는 UI 전용 카메라, 녹화에 포함) |
+| `Assets/Carousel/Scripts/CarouselMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/Carousel/Editor/CarouselMenu.cs` | `애니메이션 → 캐러셀` 메뉴 |
+| `Assets/Carousel/Resources/CarouselModels/` | Blender에서 내보낸 캐리어 3종·트레이 2종 FBX (없으면 같은 치수의 기본 도형) |
+| `docs/carousel-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 캐러셀 → Open Carousel Scene** → **Play**. 30초 영상은 **애니메이션 → 캐러셀 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/carousel_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(300초 워밍업 직후, seed 22)에서 시작해 같은 장면이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (181 프레임 = 수평형 피킹면, 586 프레임 = 수직형 작업창)
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --still 181,586 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 carousel_30s.mp4 로 합쳐짐. 자막은 Pillow가 있을 때 PNG에 합성
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# GPU가 없으면 EEVEE: --anim --engine eevee --samples 16 --res 1280x720
+# 다른 시뮬레이션 장면: node tools/export_carousel_trace.js --seed 5  (카메라 동선은 seed 22, warmup 300 기준)
+```
+
+결과 (seed 1~3 평균, 1시간): 수평형 포드 약 570 줄/h (리드타임 119초, 작업자 가동률 63%, 공개 수치 "최대 550 줄/h"와 같은 수준), 수직형 약 320 줄/h (0.20 m/s 기준 상한에 가까움). 회전 속도·캐리어 치수·피킹 시간은 공개 카탈로그의 일반적인 범위에서 잡은 가정이며 특정 제조사 도면이 아닙니다. 자세한 내용은 [docs/carousel-research.md](docs/carousel-research.md).
+
+
+---
+
+# 스태커크레인 (팔레트 자동창고) — 같은 방식의 장면
+
+높이 18 m, 길이 27.5 m 팔레트 랙 사이 통로 2개에서 단일 마스트 스태커크레인 2대가 바닥 레일과 랙 위 안내 레일을 따라 최고 4 m/s로 주행하면서 동시에 승강하고, 3단 텔레스코픽 포크로 팔레트를 넣고 꺼냅니다. 통로 앞 끝의 입고 컨베이어에서 팔레트를 받아 랙에 넣고, 출고 팔레트는 출고 컨베이어에 내려놓습니다. 특정 제조사 제품이 아닌 일반형 모델이며 로고가 없습니다. 같은 Unity 프로젝트 안에 **애니메이션 → 스태커크레인** 메뉴로 들어 있습니다.
+
+![스태커크레인 통로 안 주행](docs/images/stackercrane_chase.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/stackercrane-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_stackercrane_trace.js` | 시뮬레이션 → Blender 궤적 `blender/stackercrane_trace.json` |
+| `blender/stackercrane_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/stackercrane/` | 크레인·팔레트 FBX/GLB, 렌더 이미지 |
+| `Assets/StackerCrane/Scripts/StackerCraneSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/StackerCrane/Scripts/StackerCraneView.cs` | 랙·레일·컨베이어·크레인·팔레트·조명·후처리 자동 구성, HUD |
+| `Assets/StackerCrane/Scripts/StackerCraneCamera.cs` | Blender와 같은 30초 카메라 동선 (크레인을 따라 달리는 구간 포함) / 마우스 오비트 |
+| `Assets/StackerCrane/Scripts/StackerCraneCaption.cs` | 장비명 타이틀·단계 자막·실시간 속도 표시 (영상에 함께 녹화) |
+| `Assets/StackerCrane/Scripts/StackerCraneMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/StackerCrane/Editor/StackerCraneMenu.cs` | `애니메이션 → 스태커크레인` 메뉴 |
+| `docs/stackercrane-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과, 영상 동선 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 스태커크레인 → Open Stacker Crane Scene** → **Play**. 30초 영상은 **애니메이션 → 스태커크레인 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/stackercrane_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(624초 워밍업 직후, seed 6)에서 시작해 같은 장면·카메라·자막이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (380 프레임 = 크레인을 따라 달리는 장면)
+blender -b -P blender/stackercrane_blender.py -- --out blender/out/stackercrane --trace blender/stackercrane_trace.json --still 380 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 stackercrane_30s.mp4 로 합쳐짐
+blender -b -P blender/stackercrane_blender.py -- --out blender/out/stackercrane --trace blender/stackercrane_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_stackercrane_trace.js --seed 5  (카메라 동선과 자막은 seed 6, warmup 624 기준)
+```
+
+결과: 크레인 2대, 통로당 입고·출고 각 45건/h 요청에서 약 178 팔레트/h, 평균 사이클 31초, 크레인 가동률 67%. 주행 4 m/s·승강 1.2 m/s는 공개 범위 안에서 고른 값이고 포크 속도·위치 보정 시간·랙 치수는 가정입니다. 자세한 내용은 [docs/stackercrane-research.md](docs/stackercrane-research.md).
