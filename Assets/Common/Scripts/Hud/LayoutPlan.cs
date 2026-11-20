@@ -386,6 +386,8 @@ namespace EquipFX
             {
                 flowSig = sig;
                 flowIn.Clear(); flowOut.Clear();
+                // 입고 지점 → 모든 입고문, 모든 출고문 → 출고 지점 (트럭 길)
+                if (show) foreach (var d in s.doors) Outside(d.kind == 0 ? flowIn : flowOut, s, d, d.kind == 0);
                 if (show)
                     foreach (var m in modules)
                     {
@@ -394,14 +396,12 @@ namespace EquipFX
                         if (din != null)
                         {
                             var port = Port(m, Plan.DoorInside(s, din), out int ps);
-                            Outside(flowIn, s, din, true);
                             Inside(flowIn, s, din, port, ps, true);
                         }
                         if (dout != null)
                         {
                             var port = Port(m, Plan.DoorInside(s, dout), out int ps);
                             Inside(flowOut, s, dout, port, ps, false);
-                            Outside(flowOut, s, dout, false);
                         }
                     }
                 flowIn.Apply(); flowOut.Apply();
@@ -477,7 +477,7 @@ namespace EquipFX
             }
         }
 
-        // ------------------------------------------------------------------ 도크 대기 구역의 화물
+        // ------------------------------------------------------------------ 출고 대기 구역의 화물 (출고 트럭에 실을 물량)
         public void UpdateCargo(SiteDef s, CargoKind k)
         {
             string sig = (int)k + "#" + Sig(s);
@@ -487,21 +487,30 @@ namespace EquipFX
             int seed = 0;
             foreach (var d in s.doors)
             {
+                if (d.kind != 1) continue;
                 var r = Plan.StageRect(s, d);
                 var c = r.center; var n = -Plan.Outward(d.side); var tg = new Vector2(-n.y, n.x);
-                int count = d.kind == 0 ? 2 : 1;
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < 2; i++)
                 {
-                    var p = c + n * (i - (count - 1) / 2f) * 1.6f + tg * ((seed % 2) - 0.5f) * 0.4f;
+                    var p = c + n * (i - 0.5f) * 1.6f + tg * 1.2f;
                     var unit = new GameObject("Cargo").transform; unit.SetParent(cargoRoot, false);
                     unit.position = new Vector3(p.x, s.h, p.y);
                     unit.rotation = Quaternion.LookRotation(new Vector3(n.x, 0, n.y));
-                    BuildUnit(unit, k, seed++);
+                    CargoModels.Build(unit, k, seed++);
                 }
             }
         }
+    }
 
-        void BuildUnit(Transform t, CargoKind k, int seed)
+    // 화물 한 단위의 간단한 모형 (파렛트 + 박스, 토트 묶음, 카톤 묶음, 드럼 4개)
+    public static class CargoModels
+    {
+        static readonly Dictionary<string, Material> mats = new Dictionary<string, Material>();
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetStatics() => mats.Clear();
+
+        public static void Build(Transform t, CargoKind k, int seed)
         {
             var wood = Mat("Wood", new Color(0.70f, 0.53f, 0.34f), 0.2f);
             var card = Mat("Carton", new Color(0.78f, 0.62f, 0.42f), 0.15f);
@@ -559,7 +568,7 @@ namespace EquipFX
             g.GetComponent<MeshRenderer>().sharedMaterial = m;
         }
 
-        Material Mat(string name, Color c, float smooth, float metal = 0f)
+        static Material Mat(string name, Color c, float smooth, float metal = 0f)
         {
             if (mats.TryGetValue(name, out var m)) return m;
             m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };

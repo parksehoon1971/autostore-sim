@@ -33,6 +33,7 @@ namespace EquipFX
         public List<Vector3> sizes = new List<Vector3>();
         public int cargo = (int)CargoKind.Pallet;   // 이 물류센터가 다루는 화물
         public SiteDef site;                         // 물류센터 건물 · 출입문
+        public List<MoverSave> movers = new List<MoverSave>();   // 하역 수단
     }
 
     // 배치된 설비 하나 (모듈 루트)
@@ -142,6 +143,12 @@ namespace EquipFX
         public bool BuildingSelected { get; private set; }
         public int SelectedDoor { get; private set; } = -1;
         public event Action SiteChanged, DrawingChanged;
+        // 트럭 · 하역 수단
+        public Traffic Traffic { get; private set; }
+        public Mover SelectedMover { get; private set; }
+        public event Action<string> Notice;
+        int dragMover = -1; Mover pressMover; bool moverMoved;
+        public bool DraggingMover => dragMover >= 0;
         Vector3 siteStart; bool siteDragging; int pressDoor = -1; bool doorMoved;
         public bool Busy => buildQueue.Count > 0 || building;
         public EquipEntry Dragging => dragEntry;
@@ -175,6 +182,8 @@ namespace EquipFX
             selFrame = new FootprintFrame("SelectionFrame", transform);
             partBox = new OutlineBox("PartOutline", transform);
             plan = new FloorPlan(transform, floorMat.GetTexture("_BaseMap"));
+            Traffic = new Traffic(transform);
+            Traffic.Notice += msg => Notice?.Invoke(msg);
             ghost.Hide(); selFrame.Hide(); partBox.Hide();
         }
 
@@ -257,8 +266,27 @@ namespace EquipFX
             foreach (var f in warnFrames) f.y = FloorY;
             ghost.y = selFrame.y = FloorY;
 
-            // 물류센터 영역 그리기
+            // 물류센터 영역 그리기 (그리는 동안 트럭은 멈춤)
             if (DrawingSite) { SiteDrawing(inp, ray, overUi); EndFrame(); return; }
+            Traffic.Tick(Time.deltaTime, Site, Cargo);
+
+            // 라이브러리에서 하역 수단을 끌어 오는 중
+            if (dragMover >= 0)
+            {
+                var size = new Vector2(1.6f, 2.6f);
+                var min = new Vector2(gp.x - size.x / 2, gp.z - size.y / 2);
+                bool ok = onGround && !overUi && MoverSpotOk(new Vector2(gp.x, gp.z));
+                if (onGround && !overUi) ghost.Set(min, size, ok ? HudStyle.Ok : HudStyle.Bad, null); else ghost.Hide();
+                EndFrame();
+                if (inp.esc) { dragMover = -1; ghost.Hide(); }
+                else if (inp.lUp)
+                {
+                    int k = dragMover; dragMover = -1; ghost.Hide();
+                    if (ok) AddMover(k, new Vector2(gp.x, gp.z));
+                    else if (overUi && (inp.mouse - dragStartMouse).magnitude < 6f) AddMoverNearDock(k);
+                }
+                return;
+            }
 
             // 라이브러리에서 끌어 오는 중
             if (dragEntry != null)
@@ -286,8 +314,10 @@ namespace EquipFX
                 pressModule = PickModule(ray);
                 if (part != null) pressModule = part.module;
                 pressMouse = inp.mouse;
-                pressDoor = -1; doorMoved = false;
-                if (pressModule == null)
+                pressDoor = -1; doorMoved = false; pressMover = null; moverMoved = false;
+                var mv = part == null ? PickMover(ray) : null;
+                if (mv != null) { pressModule = null; pressMover = mv; SelectMover(mv); }
+                else if (pressModule == null)
                 {
                     // 설비가 아니면: 출입문 → 건물 바닥 → 빈 땅
                     pressDoor = PickDoor(ray);
@@ -298,6 +328,14 @@ namespace EquipFX
                 else if (pressModule != Selected || part != SelectedPart || BuildingSelected || SelectedDoor >= 0) Select(pressModule, part);
                 if (pressModule != null && onGround) { moveStartPos = pressModule.transform.position; grabOffset = pressModule.transform.position - gp; }
             }
+            // 하역 수단 끌어서 옮기기
+            if (inp.lHeld && pressMover != null && onGround && (moverMoved || (inp.mouse - pressMouse).magnitude > 6f))
+            {
+                moverMoved = true;
+                var q = new Vector2(gp.x, gp.z);
+                if (MoverSpotOk(q)) pressMover.t.position = new Vector3(q.x, FloorY, q.y);
+            }
+            if (inp.lUp && pressMover != null) { if (moverMoved) Save(); pressMover = null; }
             // 출입문 끌기: 가장 가까운 벽을 따라 이동
             if (inp.lHeld && pressDoor >= 0 && pressDoor < Site.doors.Count && onGround && (doorMoved || (inp.mouse - pressMouse).magnitude > 6f))
             {
@@ -333,6 +371,7 @@ namespace EquipFX
             if (inp.esc && moving == null) { if (SelectedPart != null) Select(Selected); else Select(null); }
             if (inp.del && Selected != null && !HudInput.Typing) Remove(Selected);
             else if (inp.del && SelectedDoor >= 0 && !HudInput.Typing) RemoveDoor(SelectedDoor);
+            else if (inp.del && SelectedMover != null && !HudInput.Typing) RemoveMover(SelectedMover);
             if (inp.f && Selected != null && !HudInput.Typing) FocusOn(Selected);
 
             // 화물을 처리할 수 없는 설비는 빨간 틀
@@ -350,6 +389,7 @@ namespace EquipFX
             else if (Selected == null) selFrame.Hide();
             if (SelectedPart != null && (SelectedPart.t == null || SelectedPart.module == null)) Select(Selected);
             if (SelectedPart != null && SelectedPart.t.gameObject.activeInHierarchy) partBox.Set(SelectedPart.WorldBounds(), HudStyle.Accent);
+            else if (SelectedMover != null && SelectedMover.t != null) partBox.Set(new Bounds(SelectedMover.t.position + Vector3.up * 1.2f, new Vector3(1.6f, 2.4f, 1.6f)), HudStyle.Accent);
             else partBox.Hide();
         }
 
@@ -439,6 +479,7 @@ namespace EquipFX
             Site = s;
             if (SelectedDoor >= Site.doors.Count) SelectedDoor = -1;
             foreach (var m in modules) if (m != null) { var p = m.transform.position; p.y = FloorY; m.transform.position = p; }
+            foreach (var mv in Traffic.movers) { var p = mv.t.position; p.y = FloorY; mv.t.position = p; }
             RelocateBlocked();
             Save();
             SiteChanged?.Invoke();
@@ -521,15 +562,89 @@ namespace EquipFX
         public void SelectBuilding()
         {
             if (BuildingSelected && Selected == null) return;
-            Selected = null; SelectedPart = null; BuildingSelected = true; SelectedDoor = -1;
+            Selected = null; SelectedPart = null; BuildingSelected = true; SelectedDoor = -1; SelectedMover = null;
             SelectionChanged?.Invoke();
         }
 
         public void SelectDoor(int i)
         {
             if (SelectedDoor == i && Selected == null) return;
-            Selected = null; SelectedPart = null; BuildingSelected = false; SelectedDoor = i;
+            Selected = null; SelectedPart = null; BuildingSelected = false; SelectedDoor = i; SelectedMover = null;
             SelectionChanged?.Invoke();
+        }
+
+        // ------------------------------------------------------------------ 하역 수단
+        public bool BeginDragMover(int kind)
+        {
+            dragEntry = null; dragMover = kind; dragStartMouse = LayoutInput.Read().mouse;
+            return true;
+        }
+
+        bool MoverSpotOk(Vector2 p)
+        {
+            if (!InsideBuilding(new Vector3(p.x, 0, p.y))) return false;
+            if (p.x < Site.x + 1.5f || p.y < Site.z + 1.5f || p.x > Site.x + Site.w - 1.5f || p.y > Site.z + Site.d - 1.5f) return false;
+            foreach (var m in modules)
+            {
+                if (m == null) continue;
+                var mn = m.Min; var sz = m.Size;
+                if (p.x > mn.x - 1f && p.x < mn.x + sz.x + 1f && p.y > mn.y - 1f && p.y < mn.y + sz.y + 1f) return false;
+            }
+            return true;
+        }
+
+        public Mover AddMover(int kind, Vector2 p)
+        {
+            var mv = Traffic.AddMover(kind, new Vector3(p.x, FloorY, p.y));
+            SelectMover(mv);
+            Save();
+            return mv;
+        }
+
+        // 눌러서 추가: 해당 화물을 다루는 문 안쪽 대기 구역 옆 빈자리
+        void AddMoverNearDock(int kind)
+        {
+            foreach (var d in Site.doors)
+            {
+                var r = Plan.StageRect(Site, d); var n = -Plan.Outward(d.side);
+                var c = r.center + n * (Plan.StageDepth / 2 + 2.5f);
+                for (int k = 0; k < 12; k++)
+                {
+                    var q = c + new Vector2((k % 4 - 1.5f) * 2f, (k / 4) * 2.5f) * (d.side < 2 ? 1 : -1);
+                    bool taken = false;
+                    foreach (var o in Traffic.movers) if ((new Vector2(o.t.position.x, o.t.position.z) - q).sqrMagnitude < 2.5f) taken = true;
+                    if (!taken && MoverSpotOk(q)) { AddMover(kind, q); return; }
+                }
+            }
+            var cc = new Vector2(Site.x + Site.w / 2, Site.z + Site.d / 2);
+            if (MoverSpotOk(cc)) AddMover(kind, cc);
+        }
+
+        public void RemoveMover(Mover m)
+        {
+            if (m == null) return;
+            if (SelectedMover == m) Select(null);
+            Traffic.RemoveMover(m);
+            Save();
+        }
+
+        public void SelectMover(Mover m)
+        {
+            if (SelectedMover == m) return;
+            Selected = null; SelectedPart = null; BuildingSelected = false; SelectedDoor = -1; SelectedMover = m;
+            SelectionChanged?.Invoke();
+        }
+
+        Mover PickMover(Ray ray)
+        {
+            if (!Ground(ray, FloorY + 0.8f, out var p)) return null;
+            Mover best = null; float bd = 1.6f * 1.6f;
+            foreach (var m in Traffic.movers)
+            {
+                float d = (new Vector2(m.t.position.x - p.x, m.t.position.z - p.z)).sqrMagnitude;
+                if (d < bd) { bd = d; best = m; }
+            }
+            return best;
         }
 
         void CameraControls(LayoutInput i, bool overUi)
@@ -745,8 +860,8 @@ namespace EquipFX
         public void Select(PlacedModule m, PartRef part)
         {
             if (part != null && part.module != m) part = null;
-            if (Selected == m && SelectedPart == part && !BuildingSelected && SelectedDoor < 0) return;
-            Selected = m; SelectedPart = part; BuildingSelected = false; SelectedDoor = -1;
+            if (Selected == m && SelectedPart == part && !BuildingSelected && SelectedDoor < 0 && SelectedMover == null) return;
+            Selected = m; SelectedPart = part; BuildingSelected = false; SelectedDoor = -1; SelectedMover = null;
             SelectionChanged?.Invoke();
         }
 
@@ -875,6 +990,7 @@ namespace EquipFX
             foreach (var kv in sizeCache) { s.sizeIds.Add(kv.Key); s.sizes.Add(kv.Value); }
             s.cargo = (int)Cargo;
             s.site = Site;
+            foreach (var mv in Traffic.movers) s.movers.Add(new MoverSave { kind = mv.kind, x = mv.t.position.x, z = mv.t.position.z });
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(s));
             PlayerPrefs.Save();
         }
@@ -891,6 +1007,7 @@ namespace EquipFX
             if (Array.IndexOf(CargoInfo.All, ck) >= 0) Cargo = ck;
             if (s.site != null && s.site.w >= Plan.MinSize && s.site.d >= Plan.MinSize) { Site = s.site; if (Site.doors == null) Site.doors = new List<DoorDef>(); if (Site.doors.Count == 0) Plan.DefaultDoors(Site); }
             for (int i = 0; i < s.sizeIds.Count && i < s.sizes.Count; i++) sizeCache[s.sizeIds[i]] = s.sizes[i];
+            if (s.movers != null) foreach (var mv in s.movers) Traffic.AddMover(mv.kind, new Vector3(mv.x, FloorY, mv.z));
             foreach (var it in s.items)
             {
                 var e = EquipCatalog.All.Find(x => x.id == it.id);

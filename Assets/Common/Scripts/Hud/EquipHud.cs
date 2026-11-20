@@ -110,7 +110,7 @@ namespace EquipFX
         readonly List<(KpiDef def, Label val)> kpiLabels = new List<(KpiDef, Label)>();
         readonly List<(PlacedModule m, Label val)> plantRows = new List<(PlacedModule, Label)>();
         readonly Dictionary<string, Label> plantUnitLbls = new Dictionary<string, Label>();
-        Label plantCountLbl, plantRobotLbl;
+        Label plantCountLbl, plantRobotLbl, balanceLbl, inDoneLbl, outDoneLbl, trucksLbl;
         // 속성
         VisualElement propBody, paramBox, specBox, specBody, moduleBox;
         Label catLbl, titleLbl, koLbl, descLbl, posLbl;
@@ -196,6 +196,7 @@ namespace EquipFX
             world.LayoutChanged += OnLayoutChanged;
             world.CargoChanged += OnCargoChanged;
             world.SiteChanged += OnSiteChanged;
+            world.Notice += OnNotice;
             world.DrawingChanged += OnDrawingChanged;
             entry = null; view = null; selModule = null; clockStart = -1f; ffTarget = -1f; pendingSeek = -1f;
             samples.Clear(); rates.Clear(); plantDirty = true;
@@ -209,6 +210,7 @@ namespace EquipFX
             world.LayoutChanged -= OnLayoutChanged;
             world.CargoChanged -= OnCargoChanged;
             world.SiteChanged -= OnSiteChanged;
+            world.Notice -= OnNotice;
             world.DrawingChanged -= OnDrawingChanged;
             world = null; selModule = null; plantDirty = true;
             UpdateModeUi();
@@ -231,6 +233,8 @@ namespace EquipFX
         void OnCargoChanged() { RefreshCards(); RefreshEntryUi(false); plantDirty = true; }
 
         void OnSiteChanged() => siteDirty = true;
+
+        void OnNotice(string msg) { Toast(msg); toastUntil = Time.unscaledTime + 6f; }
 
         void OnDrawingChanged()
         {
@@ -828,6 +832,9 @@ namespace EquipFX
             site.Add(ToolCard("물류센터 영역", "바닥을 끌어 건물 직사각형을 다시 그림", () => { if (LayoutMode) world?.BeginSiteDrawing(); else Toast("배치 모드에서 쓸 수 있습니다"); }));
             site.Add(ToolCard("입고 도크 문", "입고 쪽 벽에 출입문 추가 (끌어서 이동)", () => { if (LayoutMode) world?.AddDoor(0); else Toast("배치 모드에서 쓸 수 있습니다"); }));
             site.Add(ToolCard("출고 도크 문", "출고 쪽 벽에 출입문 추가 (끌어서 이동)", () => { if (LayoutMode) world?.AddDoor(1); else Toast("배치 모드에서 쓸 수 있습니다"); }));
+            // 하역 수단 (트럭 상하차)
+            var movers = Group(sv, "하역 수단", MoverInfo.All.Length);
+            foreach (var k in MoverInfo.All) movers.Add(MoverCard(k));
             // 설비 묶음
             foreach (var g in EquipCatalog.Groups)
             {
@@ -874,6 +881,19 @@ namespace EquipFX
             return box;
         }
 
+        VisualElement MoverCard(int kind)
+        {
+            var c = ToolCard(MoverInfo.Name(kind), MoverInfo.Desc(kind) + " · 끌어서 센터 안에 놓기", null);
+            c.RegisterCallback<PointerDownEvent>(ev =>
+            {
+                if (ev.button != 0) return;
+                if (!LayoutMode || world == null) { Toast("배치 모드에서 쓸 수 있습니다"); return; }
+                world.BeginDragMover(kind);
+                Toast($"{MoverInfo.Name(kind)}: 센터 바닥에 놓으세요 (누르기만 하면 문 근처에 자동 배치)");
+            });
+            return c;
+        }
+
         VisualElement ToolCard(string name, string desc, Action onClick)
         {
             var c = new VisualElement();
@@ -886,7 +906,7 @@ namespace EquipFX
             c.Add(txt);
             c.RegisterCallback<PointerEnterEvent>(_ => c.style.backgroundColor = HudStyle.TileHover);
             c.RegisterCallback<PointerLeaveEvent>(_ => c.style.backgroundColor = Color.clear);
-            c.RegisterCallback<ClickEvent>(_ => onClick());
+            if (onClick != null) c.RegisterCallback<ClickEvent>(_ => onClick());
             return c;
         }
 
@@ -995,6 +1015,10 @@ namespace EquipFX
             plantDirty = false;
             plantTiles.Clear(); plantList.Clear(); plantRows.Clear(); plantUnitLbls.Clear();
             if (!LayoutMode) return;
+            var (tb, vb) = Tile("잔고 (보상 − 패널티)", "만원"); plantTiles.Add(tb); balanceLbl = vb;
+            var (ti, vi) = Tile("입고 처리", "개"); plantTiles.Add(ti); inDoneLbl = vi;
+            var (to, vo) = Tile("출고 처리", "개"); plantTiles.Add(to); outDoneLbl = vo;
+            var (tt, vt) = Tile("대기 트럭", "대"); plantTiles.Add(tt); trucksLbl = vt;
             var (t1, v1) = Tile("설치된 설비", "대"); plantTiles.Add(t1); plantCountLbl = v1;
             var (t2, v2) = Tile("이동 장비 합계", "대"); plantTiles.Add(t2); plantRobotLbl = v2;
             var units = new List<string>();
@@ -1135,9 +1159,11 @@ namespace EquipFX
             {
                 specBox.style.display = DisplayStyle.None;
                 bool door = world.SelectedDoor >= 0 && world.SelectedDoor < world.Site.doors.Count;
-                catLbl.text = "물류센터";
-                titleLbl.text = door ? Plan.DoorName(world.Site, world.SelectedDoor) : "물류센터 건물";
-                koLbl.text = door ? "트럭이 붙는 도크 출입문. 장면에서 끌어 벽을 따라 옮기거나 아래에서 바꿀 수 있습니다."
+                var mv = world.SelectedMover;
+                catLbl.text = mv != null ? "하역 수단" : "물류센터";
+                titleLbl.text = mv != null ? $"{MoverInfo.Name(mv.kind)} {mv.id}" : door ? Plan.DoorName(world.Site, world.SelectedDoor) : "물류센터 건물";
+                koLbl.text = mv != null ? MoverInfo.Desc(mv.kind) + ". 트럭이 윙을 열고 기다리면 자동으로 상하차합니다."
+                           : door ? "트럭이 붙는 도크 출입문. 장면에서 끌어 벽을 따라 옮기거나 아래에서 바꿀 수 있습니다."
                                   : "바닥은 트럭 적재함 높이만큼 올라가 있고, 입고 지점과 출고 지점을 마주하는 벽에 출입문이 있습니다.";
                 descLbl.text = ""; cargoLbl.text = $"화물: {CargoInfo.Name(world.Cargo)}"; cargoLbl.style.color = HudStyle.Text;
                 RebuildSiteBox();
@@ -1287,6 +1313,11 @@ namespace EquipFX
             if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
             if (LayoutMode) UpdatePlant();
             if (siteDirty && !HudInput.Typing) { siteDirty = false; if (SiteSelected) RebuildSiteBox(); }
+            if (world != null && world.SelectedMover != null && siteBox != null)
+            {
+                var stl = siteBox.Q<Label>("moverState");
+                if (stl != null) stl.text = world.SelectedMover.State;
+            }
             if (shownPart != null) UpdatePartRows();
 
             if (!Ready)
@@ -1328,6 +1359,14 @@ namespace EquipFX
                 val.text = $"{tp.ToString("N0", CultureInfo.InvariantCulture)} {m.entry.throughputUnit}";
             }
             if (plantCountLbl != null) plantCountLbl.text = world.modules.Count.ToString();
+            var tr = world.Traffic;
+            if (balanceLbl != null && tr != null)
+            {
+                balanceLbl.text = tr.balance.ToString("N0", CultureInfo.InvariantCulture);
+                balanceLbl.style.color = tr.balance < 0 ? HudStyle.Bad : tr.balance > 0 ? HudStyle.Ok : HudStyle.Strong;
+                inDoneLbl.text = tr.inDone.ToString(); outDoneLbl.text = tr.outDone.ToString();
+                trucksLbl.text = tr.TrucksWaiting.ToString();
+            }
             if (plantRobotLbl != null) plantRobotLbl.text = robots.ToString();
             foreach (var kv in plantUnitLbls)
                 kv.Value.text = sums.TryGetValue(kv.Key, out var s) ? s.ToString("N0", CultureInfo.InvariantCulture) : "—";
@@ -1424,7 +1463,7 @@ namespace EquipFX
         static string PartFieldName(string n) => PartNames.TryGetValue(n, out var k) ? $"{k}" : n;
 
         // ---------------------------------------------------------------- 물류센터 건물 · 출입문
-        bool SiteSelected => LayoutMode && world != null && (world.BuildingSelected || world.SelectedDoor >= 0);
+        bool SiteSelected => LayoutMode && world != null && (world.BuildingSelected || world.SelectedDoor >= 0 || world.SelectedMover != null);
 
         void BuildSiteBanner()
         {
@@ -1494,6 +1533,24 @@ namespace EquipFX
             siteBox.Clear();
             var s = world.Site;
             int di = world.SelectedDoor;
+            if (world.SelectedMover != null)
+            {
+                var mv = world.SelectedMover;
+                siteBox.Add(SectionTitle("상태"));
+                var st = HudStyle.MakeLabel(mv.State, 13, HudStyle.Strong, true); st.name = "moverState";
+                siteBox.Add(st);
+                var canDo = MoverInfo.Handles(mv.kind, world.Cargo);
+                if (!canDo)
+                {
+                    var w = HudStyle.MakeLabel($"{CargoInfo.Name(world.Cargo)}은(는) 이 수단으로 하역할 수 없습니다. 지게차를 놓으세요.", 12, HudStyle.Bad);
+                    w.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(w, 6, 0, 0, 0); siteBox.Add(w);
+                }
+                var acts = Row(); HudStyle.Margin(acts, 12, 0, 0, 0);
+                var del = HudStyle.MakeButton("삭제", () => world.RemoveMover(mv)); del.style.color = HudStyle.Rec;
+                acts.Add(del);
+                siteBox.Add(acts);
+                return;
+            }
             if (di >= 0 && di < s.doors.Count)
             {
                 var d = s.doors[di];
@@ -1694,6 +1751,8 @@ namespace EquipFX
                     if (i == world.SelectedDoor) c = HudStyle.Accent;
                     Tag(cam, new Vector3(p.x, s.h + 1.6f, p.y), Plan.DoorName(s, i), c, 11);
                 }
+                foreach (var (pos, text, late) in world.Traffic.Tags(s))
+                    Tag(cam, pos, text, late ? new Color(0.85f, 0.20f, 0.20f, 0.92f) : new Color(0.15f, 0.17f, 0.20f, 0.88f), 11);
                 var top = new Vector3(s.x + s.w / 2, 0.5f, s.z - 6f);
                 Tag(cam, top, $"{s.w:0} × {s.d:0} m  ·  바닥 높이 {s.h:0.0#} m", new Color(0.2f, 0.22f, 0.26f, 0.85f), 11);
             }
