@@ -272,6 +272,7 @@ namespace EquipFX
         public readonly List<Mover> movers = new List<Mover>();
         public float clock;
         public int balance, inDone, outDone, onTime, missed;
+        public bool unlimited;                     // 무제한 모드: 보상 · 패널티 · 마감 없음
         public event Action<string> Notice;
         readonly Transform root;
         readonly System.Random rng = new System.Random(7);
@@ -413,11 +414,12 @@ namespace EquipFX
                     if (finished)
                     {
                         int reward = b.units * RewardPerUnit + OnTimeBonus;
-                        balance += reward; onTime++;
-                        Notice?.Invoke($"{Plan.DoorName(s, b.door)}: 화주 주문 {b.units}개 처리 완료  +{reward}만원");
+                        onTime++;
+                        if (unlimited) Notice?.Invoke($"{Plan.DoorName(s, b.door)}: 화주 주문 {b.units}개 처리 완료");
+                        else { balance += reward; Notice?.Invoke($"{Plan.DoorName(s, b.door)}: 화주 주문 {b.units}개 처리 완료  +{reward}만원"); }
                         b.state = 4;
                     }
-                    else if (clock > b.due)
+                    else if (!unlimited && clock > b.due)
                     {
                         int left = b.units - b.done;
                         int pen = Penalty + left * PenaltyPerUnit;
@@ -761,8 +763,8 @@ namespace EquipFX
             {
                 if (b.truck == null || b.state < 2 || b.state > 3) continue;
                 float left = Mathf.Max(0, b.due - clock);
-                string t = $"{(b.inbound ? "입고" : "출고")} {b.done}/{b.units}  ·  마감 {(int)(left / 60)}:{(int)(left % 60):00}";
-                yield return (b.truck.root.position + Vector3.up * 4.6f, t, left < 40f);
+                string t = $"{(b.inbound ? "입고" : "출고")} {b.done}/{b.units}" + (unlimited ? "" : $"  ·  마감 {(int)(left / 60)}:{(int)(left % 60):00}");
+                yield return (b.truck.root.position + Vector3.up * 4.6f, t, !unlimited && left < 40f);
             }
         }
 

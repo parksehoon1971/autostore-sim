@@ -35,6 +35,7 @@ namespace EquipFX
         public SiteDef site;                         // 물류센터 건물 · 출입문
         public List<MoverSave> movers = new List<MoverSave>();   // 하역 수단
         public bool moversGiven;                     // 기본 하역 수단(지게차 1 · 작업자 1)을 이미 줌
+        public bool unlimited;                       // 무제한 모드 (돈 · 마감 없음)
     }
 
     // 배치된 설비 하나 (모듈 루트)
@@ -136,6 +137,16 @@ namespace EquipFX
         public PartRef SelectedPart { get; private set; }
         public event Action SelectionChanged, LayoutChanged, CargoChanged;
         public CargoKind Cargo { get; private set; } = CargoKind.Pallet;
+        // 자금 모드: 화주 주문 보상 · 패널티로 잔고가 움직이고 마감이 있음. 무제한 모드: 돈과 마감 없이 자유롭게 설계
+        public bool Unlimited { get; private set; }
+
+        public void SetUnlimited(bool on)
+        {
+            if (Unlimited == on) return;
+            Unlimited = on;
+            Save();
+            CargoChanged?.Invoke();
+        }
         public bool CanHandle(EquipEntry e) => e != null && e.Handles(Cargo);
         // 물류센터 건물
         public SiteDef Site { get; private set; } = NewSite();
@@ -272,6 +283,7 @@ namespace EquipFX
             // 물류센터 영역 그리기 (그리는 동안 트럭은 멈춤)
             if (DrawingSite) { SiteDrawing(inp, ray, overUi); EndFrame(); return; }
             if (!moversGiven && Site.drawn) GiveDefaultMovers();
+            Traffic.unlimited = Unlimited;
             Traffic.Tick(Time.deltaTime, Site, Cargo);
 
             // 라이브러리에서 하역 수단을 끌어 오는 중
@@ -1038,6 +1050,7 @@ namespace EquipFX
             s.site = Site;
             foreach (var mv in Traffic.movers) s.movers.Add(new MoverSave { kind = mv.kind, x = mv.t.position.x, z = mv.t.position.z });
             s.moversGiven = moversGiven;
+            s.unlimited = Unlimited;
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(s));
             PlayerPrefs.Save();
         }
@@ -1056,6 +1069,7 @@ namespace EquipFX
             for (int i = 0; i < s.sizeIds.Count && i < s.sizes.Count; i++) sizeCache[s.sizeIds[i]] = s.sizes[i];
             if (s.movers != null) foreach (var mv in s.movers) Traffic.AddMover(mv.kind, new Vector3(mv.x, FloorY, mv.z));
             moversGiven = s.moversGiven || (s.movers != null && s.movers.Count > 0);
+            Unlimited = s.unlimited;
             foreach (var it in s.items)
             {
                 var e = EquipCatalog.All.Find(x => x.id == it.id);

@@ -97,7 +97,8 @@ namespace EquipFX
         Button cargoChip;
         Label cargoLbl;
         CargoKind modalPick = CargoKind.Pallet;
-        bool modalStartFlow, siteDirty, overBanner;
+        bool modalStartFlow, siteDirty, overBanner, modalUnlimited;
+        Button modeFundsBtn, modeFreeBtn;
         // 메인 화면 탭: 3D / 물류흐름도(MFD)
         VisualElement mfdPanel;
         MfdView mfd;
@@ -1515,7 +1516,7 @@ namespace EquipFX
                 for (int k = 0; k < world.modules.Count; k++) if (world.modules[k] != null) mfd.SetSub("mod" + k, ModuleSub(world.modules[k]));
             }
             if (mfdSummary != null)
-                mfdSummary.text = $"잔고 {tr.balance.ToString("N0", CultureInfo.InvariantCulture)}만원 · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
+                mfdSummary.text = (world.Unlimited ? "무제한 모드" : $"잔고 {tr.balance.ToString("N0", CultureInfo.InvariantCulture)}만원") + $" · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
         }
 
         void OnMfdClick(string id)
@@ -1552,7 +1553,7 @@ namespace EquipFX
             var tr = world.Traffic;
             if (balanceLbl != null && tr != null)
             {
-                balanceLbl.text = tr.balance.ToString("N0", CultureInfo.InvariantCulture);
+                balanceLbl.text = world.Unlimited ? "무제한" : tr.balance.ToString("N0", CultureInfo.InvariantCulture);
                 balanceLbl.style.color = tr.balance < 0 ? HudStyle.Bad : tr.balance > 0 ? HudStyle.Ok : HudStyle.Strong;
                 inDoneLbl.text = tr.inDone.ToString(); outDoneLbl.text = tr.outDone.ToString();
                 trucksLbl.text = tr.TrucksWaiting.ToString();
@@ -1833,7 +1834,7 @@ namespace EquipFX
                 var cg = kv.Value.Q<Label>("cargo");
                 if (cg != null) cg.style.color = ok ? HudStyle.Muted : HudStyle.Bad;
             }
-            if (cargoChip != null && world != null) cargoChip.text = $"화물: {CargoInfo.Short(world.Cargo)}  ▾";
+            if (cargoChip != null && world != null) cargoChip.text = $"화물: {CargoInfo.Short(world.Cargo)} · {(world.Unlimited ? "무제한" : "자금")}  ▾";
         }
 
         void BuildCargoModal()
@@ -1855,9 +1856,23 @@ namespace EquipFX
             cargoTiles = new VisualElement { pickingMode = PickingMode.Ignore };
             cargoTiles.style.flexDirection = FlexDirection.Row; cargoTiles.style.flexWrap = Wrap.Wrap;
             card.Add(cargoTiles);
+            // 게임 모드
+            var mt = HudStyle.MakeLabel("게임 모드", 15, HudStyle.Strong, true); HudStyle.Margin(mt, 14, 0, 8, 0);
+            card.Add(mt);
+            var modes = Row();
+            modeFundsBtn = HudStyle.MakeButton("자금 모드", () => { modalUnlimited = false; UpdateModeButtons(); }, 130);
+            modeFundsBtn.tooltip = "화주 주문을 처리하면 보상, 마감을 넘기면 패널티. 잔고가 움직입니다.";
+            modeFreeBtn = HudStyle.MakeButton("무제한 모드", () => { modalUnlimited = true; UpdateModeButtons(); }, 130);
+            modeFreeBtn.tooltip = "돈과 마감 없이 자유롭게 센터를 설계합니다. 트럭과 상하차는 그대로 돌아갑니다.";
+            modes.Add(modeFundsBtn); modes.Add(Gap(8)); modes.Add(modeFreeBtn); modes.Add(Gap(12));
+            modeDescLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted);
+            modeDescLbl.style.flexGrow = 1; modeDescLbl.style.whiteSpace = WhiteSpace.Normal;
+            modes.Add(modeDescLbl);
+            card.Add(modes);
             var btns = Row(); btns.style.justifyContent = Justify.FlexEnd; HudStyle.Margin(btns, 18, 0, 0, 0);
             var go = HudStyle.MakeButton("이 화물로 시작", () =>
             {
+                world?.SetUnlimited(modalUnlimited);
                 world?.SetCargo(modalPick);
                 HideCargoModal();
                 if (modalStartFlow && world != null) world.BeginSiteDrawing();   // 다음 단계: 물류센터 영역 그리기
@@ -1868,6 +1883,17 @@ namespace EquipFX
             cargoModal.Add(card);
             cargoModal.style.display = DisplayStyle.None;
             root.Add(cargoModal);
+        }
+
+        Label modeDescLbl;
+
+        void UpdateModeButtons()
+        {
+            if (modeFundsBtn == null) return;
+            HudStyle.SetOn(modeFundsBtn, !modalUnlimited); HudStyle.SetOn(modeFreeBtn, modalUnlimited);
+            modeDescLbl.text = modalUnlimited
+                ? "돈과 마감 없이 자유롭게 설계합니다. 트럭과 상하차는 그대로 돌아갑니다."
+                : "주문을 제때 처리하면 보상, 마감을 넘기면 패널티를 받아 잔고가 움직입니다.";
         }
 
         void RebuildCargoTiles()
@@ -1904,7 +1930,9 @@ namespace EquipFX
             cargoAsked = true;
             if (cargoModal == null || !LayoutMode || world == null) return;
             modalPick = world.Cargo;
+            modalUnlimited = world.Unlimited;
             RebuildCargoTiles();
+            UpdateModeButtons();
             cargoModal.style.display = DisplayStyle.Flex;
             overModal = true; UpdOver();
         }
