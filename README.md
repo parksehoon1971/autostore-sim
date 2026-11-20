@@ -222,3 +222,41 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 ```
 
 결과: 로봇 20대에서 약 790 토트/h, 평균 리드타임 80초. 바닥 4 m/s, 등반 최대 14 m, 적재 30 kg, 토트 650×450 mm는 공개 수치이고 랙 칸 폭·단 간격·로봇 치수·등반 속도는 가정입니다. Exotec 제품 도면이 아닙니다. 자세한 내용은 [docs/skypod-research.md](docs/skypod-research.md).
+
+---
+
+# 스태커크레인 (팔레트 자동창고) — 같은 방식의 장면
+
+높이 18 m, 길이 27.5 m 팔레트 랙 사이 통로 2개에서 단일 마스트 스태커크레인 2대가 바닥 레일과 랙 위 안내 레일을 따라 최고 4 m/s로 주행하면서 동시에 승강하고, 3단 텔레스코픽 포크로 팔레트를 넣고 꺼냅니다. 통로 앞 끝의 입고 컨베이어에서 팔레트를 받아 랙에 넣고, 출고 팔레트는 출고 컨베이어에 내려놓습니다. 특정 제조사 제품이 아닌 일반형 모델이며 로고가 없습니다. 같은 Unity 프로젝트 안에 **애니메이션 → 스태커크레인** 메뉴로 들어 있습니다.
+
+![스태커크레인 통로 안 주행](docs/images/stackercrane_chase.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/stackercrane-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_stackercrane_trace.js` | 시뮬레이션 → Blender 궤적 `blender/stackercrane_trace.json` |
+| `blender/stackercrane_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/stackercrane/` | 크레인·팔레트 FBX/GLB, 렌더 이미지 |
+| `Assets/StackerCrane/Scripts/StackerCraneSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/StackerCrane/Scripts/StackerCraneView.cs` | 랙·레일·컨베이어·크레인·팔레트·조명·후처리 자동 구성, HUD |
+| `Assets/StackerCrane/Scripts/StackerCraneCamera.cs` | Blender와 같은 30초 카메라 동선 (크레인을 따라 달리는 구간 포함) / 마우스 오비트 |
+| `Assets/StackerCrane/Scripts/StackerCraneCaption.cs` | 장비명 타이틀·단계 자막·실시간 속도 표시 (영상에 함께 녹화) |
+| `Assets/StackerCrane/Scripts/StackerCraneMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/StackerCrane/Editor/StackerCraneMenu.cs` | `애니메이션 → 스태커크레인` 메뉴 |
+| `docs/stackercrane-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과, 영상 동선 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 스태커크레인 → Open Stacker Crane Scene** → **Play**. 30초 영상은 **애니메이션 → 스태커크레인 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/stackercrane_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(624초 워밍업 직후, seed 6)에서 시작해 같은 장면·카메라·자막이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (380 프레임 = 크레인을 따라 달리는 장면)
+blender -b -P blender/stackercrane_blender.py -- --out blender/out/stackercrane --trace blender/stackercrane_trace.json --still 380 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 stackercrane_30s.mp4 로 합쳐짐
+blender -b -P blender/stackercrane_blender.py -- --out blender/out/stackercrane --trace blender/stackercrane_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_stackercrane_trace.js --seed 5  (카메라 동선과 자막은 seed 6, warmup 624 기준)
+```
+
+결과: 크레인 2대, 통로당 입고·출고 각 45건/h 요청에서 약 178 팔레트/h, 평균 사이클 31초, 크레인 가동률 67%. 주행 4 m/s·승강 1.2 m/s는 공개 범위 안에서 고른 값이고 포크 속도·위치 보정 시간·랙 치수는 가정입니다. 자세한 내용은 [docs/stackercrane-research.md](docs/stackercrane-research.md).
