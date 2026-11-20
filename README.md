@@ -152,6 +152,8 @@ blender -b -P blender/rapyuta_blender.py -- --out blender/out/rapyuta --trace bl
 
 Hai Robotics의 HaiPick Climb처럼, 높이 11.7 m 표준 랙의 통로 쪽 면에 가이드 레일을 달고 로봇 18대가 레일을 잡고 올라가 토트를 꺼냅니다. 로봇은 토트를 실은 채 랙 밑으로 지나 앞쪽 작업대 3곳으로 달려가고, 작업대 레일을 조금 올라 토트를 허리 높이로 내민 뒤 가까운 빈 칸에 다시 넣습니다. 같은 Unity 프로젝트 안에 **애니메이션 → HaiPick** 메뉴로 들어 있습니다.
 
+![HaiPick 전경](docs/images/haipick_wide.png)
+
 ![HaiPick 등반](docs/images/haipick_climb.png)
 
 | 경로 | 내용 |
