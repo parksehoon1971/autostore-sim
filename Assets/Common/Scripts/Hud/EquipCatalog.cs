@@ -19,6 +19,54 @@ namespace EquipFX
         public double min, max;
     }
 
+    // 물류센터가 다루는 화물 종류. 설비마다 처리할 수 있는 화물이 정해져 있음
+    [Flags]
+    public enum CargoKind { None = 0, Pallet = 1, Tote = 2, Carton = 4, Drum = 8 }
+
+    public static class CargoInfo
+    {
+        public static readonly CargoKind[] All = { CargoKind.Pallet, CargoKind.Tote, CargoKind.Carton, CargoKind.Drum };
+
+        public static string Name(CargoKind k) => k switch
+        {
+            CargoKind.Pallet => "파렛트 화물",
+            CargoKind.Tote => "토트 소형 화물",
+            CargoKind.Carton => "카톤 박스",
+            CargoKind.Drum => "드럼통",
+            _ => "—",
+        };
+
+        public static string Short(CargoKind k) => k switch
+        {
+            CargoKind.Pallet => "파렛트", CargoKind.Tote => "토트", CargoKind.Carton => "카톤", CargoKind.Drum => "드럼", _ => "—",
+        };
+
+        public static string Desc(CargoKind k) => k switch
+        {
+            CargoKind.Pallet => "1.1 × 1.1 m 표준 파렛트에 쌓은 유닛로드. 지게차·스태커 크레인으로 다룹니다.",
+            CargoKind.Tote => "토트·빈에 담기는 낱개 상품 (화장품, 부품, 의류 등). 로봇형 자동창고가 다룹니다.",
+            CargoKind.Carton => "택배·케이스 단위의 골판지 박스. 소터, 셔틀, 포장 라인이 다룹니다.",
+            CargoKind.Drum => "200 L 드럼통. 파렛트에 실어 스태커 크레인으로 보관합니다.",
+            _ => "",
+        };
+
+        public static Color Tint(CargoKind k) => k switch
+        {
+            CargoKind.Pallet => new Color(0.36f, 0.62f, 0.95f),
+            CargoKind.Tote => new Color(0.20f, 0.72f, 0.62f),
+            CargoKind.Carton => new Color(0.80f, 0.60f, 0.36f),
+            CargoKind.Drum => new Color(0.30f, 0.45f, 0.80f),
+            _ => UnityEngine.Color.gray,
+        };
+
+        public static string Names(CargoKind flags)
+        {
+            var parts = new List<string>();
+            foreach (var k in All) if ((flags & k) != 0) parts.Add(Short(k));
+            return parts.Count > 0 ? string.Join(" · ", parts) : "—";
+        }
+    }
+
     // 클릭해 속성을 볼 수 있는 하위 오브젝트 묶음: View 의 Transform 목록 필드 ↔ 시뮬레이션의 같은 순서 목록
     public sealed class PartDef
     {
@@ -41,11 +89,24 @@ namespace EquipFX
         public readonly List<KpiDef> kpis = new List<KpiDef>();
         public readonly List<ParamDef> pars = new List<ParamDef>();
         public readonly List<PartDef> parts = new List<PartDef>();
+        public CargoKind cargo;                                // 처리할 수 있는 화물
+        public bool Handles(CargoKind k) => (cargo & k) != 0;
     }
 
     public static class EquipCatalog
     {
         static List<EquipEntry> all;
+
+        // 센터 설계용 라이브러리 분류 (왼쪽 패널의 접는 묶음 순서)
+        public static readonly string[] Groups = { "보관 · 자동창고 (AS/RS)", "피킹 · 로봇 (GTP)", "분류 · 소터", "포장 · 출하" };
+
+        public static string GroupOf(EquipEntry e) => e.id switch
+        {
+            "stacker" or "autostore" or "rapyuta" or "shuttle" => Groups[0],
+            "airrob" or "haipick" or "skypod" or "carousel" => Groups[1],
+            "libiao" or "tsorter" => Groups[2],
+            _ => Groups[3],
+        };
         public static List<EquipEntry> All => all ??= Build();
 
         public static EquipEntry Find(Component view)
@@ -66,6 +127,7 @@ namespace EquipFX
                     "빈을 수직으로 쌓은 그리드 위를 로봇이 달리며, 그리퍼로 스택 안의 빈을 꺼내(디깅) 포트로 가져다 줍니다.",
                     ScenePaths.AutoStore, "AutoStore", typeof(global::AutoStore.MovieCapture), "AutoStore.EditorTools.AutoStoreMenu", "bins/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Tote);
                 b.Part("로봇", "robotT", "robots"); b.Part("빈", "binT", "binLoc");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("포트", "개", v => v.Sim.ports.Count.ToString());
@@ -83,6 +145,7 @@ namespace EquipFX
                     "높은 데크 위를 소형 로봇이 소포를 싣고 달려, 목적지 구멍 위에서 트레이를 기울여 아래 자루로 떨어뜨립니다.",
                     ScenePaths.Libiao, "LibiaoSorter", typeof(global::Libiao.LibiaoMovieCapture), "Libiao.EditorTools.LibiaoMenu", "parcels/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.delivered, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Carton);
                 b.Part("로봇", "robotT", "robots");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("슈트", "개", v => v.Sim.chutes.Count.ToString());
@@ -98,6 +161,7 @@ namespace EquipFX
                     "빗살(핑거) 모양 플랫폼 위를 로봇이 달려, 핑거 사이 슈트 통으로 소포를 떨어뜨리고 가득 찬 통은 교체합니다.",
                     ScenePaths.TSorter, "TSorterLine", typeof(global::TSorter.TSorterMovieCapture), "TSorter.EditorTools.TSorterMenu", "parcels/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.delivered, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Carton);
                 b.Part("로봇", "robotT", "robots");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("슈트", "개", v => v.Sim.chutes.Count.ToString());
@@ -113,6 +177,7 @@ namespace EquipFX
                     "랙 위 레일을 달리는 AirRob 이 토트를 꺼내 터널로 내려 주고, 바닥 로봇이 받아 피킹 스테이션으로 나릅니다.",
                     ScenePaths.AirRob, "AirRobWarehouse", typeof(global::AirRob.AirRobMovieCapture), "AirRob.EditorTools.AirRobMenu", "totes/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.airs.Count + v.Sim.robots.Count);
+                b.Cargo(CargoKind.Tote);
                 b.Part("랙 상부 로봇", "airT", "airs"); b.Part("바닥 로봇", "botT", "robots"); b.Part("토트", "toteT", "toteLoc");
                 b.K("AirRob", "대", v => v.Sim.airs.Count.ToString());
                 b.K("바닥 로봇", "대", v => v.Sim.robots.Count.ToString());
@@ -131,6 +196,7 @@ namespace EquipFX
                     "층마다 로봇이 빈 아래로 들어가 들어 올려 나르고, 리프트가 로봇째 층 사이를 오르내려 피킹층으로 보냅니다.",
                     ScenePaths.Rapyuta, "RapyutaASRS", typeof(global::Rapyuta.RapyutaMovieCapture), "Rapyuta.EditorTools.RapyutaMenu", "bins/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Tote);
                 b.Part("로봇", "robotT", "robots"); b.Part("리프트", "liftT", "lifts"); b.Part("빈", "binT", "binLoc");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("리프트", "대", v => v.Sim.lifts.Count.ToString());
@@ -149,6 +215,7 @@ namespace EquipFX
                     "로봇이 통로를 달리다 랙 기둥을 타고 올라가 높은 단의 토트를 직접 꺼내 작업대로 가져옵니다.",
                     ScenePaths.HaiPick, "HaiPickClimb", typeof(global::HaiPick.HaiPickMovieCapture), "HaiPick.EditorTools.HaiPickMenu", "totes/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Tote | CargoKind.Carton);
                 b.Part("로봇", "robotT", "robots"); b.Part("토트", "toteT", "toteLoc");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("보관 토트", "개", v => v.Sim.totes.ToString());
@@ -166,6 +233,7 @@ namespace EquipFX
                     "바닥을 달리던 로봇이 그대로 랙을 타고 올라가 토트를 꺼낸 뒤, 내려와 피킹 스테이션으로 줄지어 들어갑니다.",
                     ScenePaths.Skypod, "SkypodWarehouse", typeof(global::Skypod.SkypodMovieCapture), "Skypod.EditorTools.SkypodMenu", "totes/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.robots.Count);
+                b.Cargo(CargoKind.Tote);
                 b.Part("로봇", "robotT", "robots"); b.Part("토트", "toteT", "toteLoc");
                 b.K("로봇", "대", v => v.Sim.robots.Count.ToString());
                 b.K("보관 토트", "개", v => v.Sim.totes.ToString());
@@ -183,6 +251,7 @@ namespace EquipFX
                     "단마다 셔틀이 레일을 달려 토트를 꺼내고, 통로 앞 리프트가 1층 컨베이어로 내려 스테이션까지 보냅니다.",
                     ScenePaths.Shuttle, "ShuttleRackWarehouse", typeof(global::ShuttleRack.ShuttleMovieCapture), "ShuttleRack.EditorTools.ShuttleMenu", "totes/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.ThroughputPerHour, v => v.Sim.statDone, v => v.Sim.shuttles.Count);
+                b.Cargo(CargoKind.Tote | CargoKind.Carton);
                 b.Part("셔틀", "shT", "shuttles"); b.Part("리프트", "carT", "lifts"); b.Part("토트", "toteT");
                 b.K("셔틀", "대", v => v.Sim.shuttles.Count.ToString());
                 b.K("리프트", "대", v => v.Sim.lifts.Count.ToString());
@@ -202,6 +271,7 @@ namespace EquipFX
                     ScenePaths.Carousel, "CarouselPicking", typeof(global::Carousel.CarouselMovieCapture), "Carousel.EditorTools.CarouselMenu", "lines/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.HLinesPerHour + v.Sim.VLinesPerHour,
                     v => (v.Sim.HLinesPerHour + v.Sim.VLinesPerHour) * v.Sim.t / 3600.0, v => v.config.hCount + 1);
+                b.Cargo(CargoKind.Tote);
                 b.Part("수평 캐러셀 선반", "hCar", "units"); b.Part("수직 캐러셀 트레이", "vTray");
                 b.K("수평형 처리량", "lines/h", v => v.Sim.HLinesPerHour.ToString("0"));
                 b.K("수직형 처리량", "lines/h", v => v.Sim.VLinesPerHour.ToString("0"));
@@ -219,6 +289,7 @@ namespace EquipFX
                     "통로마다 스태커크레인이 주행·승강하며 텔레스코픽 포크로 팔레트를 입고·출고합니다. 입출고를 묶은 이중 사이클로 효율을 높입니다.",
                     ScenePaths.StackerCrane, "StackerCraneWarehouse", typeof(global::StackerCrane.StackerCraneMovieCapture), "StackerCrane.EditorTools.StackerCraneMenu", "moves/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.MovesPerHour, v => v.Sim.statStored + v.Sim.statRetrieved, v => v.config.aisles);
+                b.Cargo(CargoKind.Pallet | CargoKind.Drum);
                 b.Part("스태커 크레인", "craneT", "cranes"); b.Part("팔레트", "palT", "pal");
                 b.K("크레인", "대", v => v.config.aisles.ToString());
                 b.K("보관률", "", v => Pct(v.Sim.Occupancy));
@@ -235,6 +306,7 @@ namespace EquipFX
                     "로봇 팔이 납작한 박스를 세워 제함하고, 컨베이어를 따라 제품을 채운 뒤 테이프로 봉함합니다.",
                     ScenePaths.CaseLine, "CaseLine", typeof(global::CaseLine.CaseLineMovieCapture), "CaseLine.EditorTools.CaseLineMenu", "box/h");
                 b.Core(v => v.Cam != null || v.moduleMode, v => v.T, v => 3600.0 / global::CaseLine.K.PERIOD, v => CaseDone(v.T), v => 1);
+                b.Cargo(CargoKind.Carton);
                 b.K("박스 규격", "mm", v => $"{(global::CaseLine.K.L * 1000):0}×{(global::CaseLine.K.W * 1000):0}×{(global::CaseLine.K.H * 1000):0}");
                 b.K("투입 간격", "s", v => global::CaseLine.K.PERIOD.ToString("0.0"));
                 b.K("컨베이어", "m/min", v => (global::CaseLine.K.V * 60).ToString("0"));
@@ -280,6 +352,7 @@ namespace EquipFX
                 var w = Wrap(val, null);
                 e.kpis.Add(new KpiDef { label = label, unit = unit, value = c => ready != null && ready(c) ? w(c) : null });
             }
+            public void Cargo(CargoKind k) => e.cargo = k;
             public void Part(string label, string viewField, string simList = null) =>
                 e.parts.Add(new PartDef { label = label, viewField = viewField, simList = simList });
             public void P(string field, string label, double min, double max) =>

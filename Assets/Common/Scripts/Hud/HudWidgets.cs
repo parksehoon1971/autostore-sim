@@ -223,6 +223,172 @@ namespace EquipFX
             Poly(p, new Vector2(x, y), new Vector2(x + w, y), new Vector2(x + w, y + h), new Vector2(x, y + h));
     }
 
+    // ------------------------------------------------------------------ 드롭다운
+    // 기본 DropdownField 는 글자가 잘리고 펼친 목록에 가로 스크롤이 생겨, 직접 만든 단추 + 목록으로 대신함.
+    // 목록은 host(HUD 루트) 맨 위에 띄우고, 바깥을 누르면 닫힘.
+    public class HudDropdown : VisualElement
+    {
+        readonly List<string> choices;
+        readonly Label text;
+        readonly Func<VisualElement> host;
+        readonly Action<int> onChange;
+        VisualElement catcher, popup;
+        bool hover;
+        public Action<bool> popupOpenChanged;   // 목록이 열려 있는 동안 장면 클릭을 막기 위해
+        public int Index { get; private set; }
+
+        public HudDropdown(List<string> choices, int index, float width, Action<int> onChange, Func<VisualElement> host)
+        {
+            this.choices = choices; this.onChange = onChange; this.host = host; Index = index;
+            style.flexDirection = FlexDirection.Row; style.alignItems = Align.Center; style.flexShrink = 0;
+            style.width = width; style.height = 32; HudStyle.Margin(this, 0, 2, 0, 2); HudStyle.Pad(this, 0, 10);
+            HudStyle.Radius(this, 8); style.backgroundColor = HudStyle.Tile;
+            text = HudStyle.MakeLabel(index >= 0 && index < choices.Count ? choices[index] : "", 13, HudStyle.Text);
+            text.style.flexGrow = 1; text.style.flexShrink = 1; text.style.unityTextAlign = TextAnchor.MiddleLeft;
+            text.style.whiteSpace = WhiteSpace.NoWrap; text.style.overflow = Overflow.Visible;
+            Add(text);
+            var arrow = new VisualElement { pickingMode = PickingMode.Ignore };
+            arrow.style.width = 10; arrow.style.height = 10; arrow.style.flexShrink = 0; HudStyle.Margin(arrow, 0, 0, 0, 6);
+            arrow.generateVisualContent += mgc =>
+            {
+                var p = mgc.painter2D; p.strokeColor = HudStyle.Muted; p.lineWidth = 1.6f; p.lineCap = LineCap.Round; p.lineJoin = LineJoin.Round;
+                p.BeginPath(); p.MoveTo(new Vector2(1.5f, 3.5f)); p.LineTo(new Vector2(5f, 7f)); p.LineTo(new Vector2(8.5f, 3.5f)); p.Stroke();
+            };
+            Add(arrow);
+            RegisterCallback<PointerEnterEvent>(_ => { hover = true; Paint(); });
+            RegisterCallback<PointerLeaveEvent>(_ => { hover = false; Paint(); });
+            RegisterCallback<PointerDownEvent>(ev => { if (ev.button == 0) { if (popup == null) Open(); else Close(); ev.StopPropagation(); } });
+            RegisterCallback<DetachFromPanelEvent>(_ => Close());
+        }
+
+        void Paint() => style.backgroundColor = hover || popup != null ? HudStyle.TileHover : HudStyle.Tile;
+
+        public void SetIndexWithoutNotify(int i)
+        {
+            if (i < 0 || i >= choices.Count) return;
+            Index = i; text.text = choices[i];
+        }
+
+        void Open()
+        {
+            var h = host?.Invoke();
+            if (h == null || panel == null) return;
+            catcher = new VisualElement();
+            catcher.style.position = Position.Absolute; catcher.style.left = 0; catcher.style.right = 0; catcher.style.top = 0; catcher.style.bottom = 0;
+            catcher.RegisterCallback<PointerDownEvent>(ev => { Close(); ev.StopPropagation(); });
+            h.Add(catcher);
+
+            popup = new VisualElement();
+            popup.style.position = Position.Absolute;
+            var wb = worldBound; var hb = h.worldBound;
+            popup.style.left = wb.xMin - hb.xMin; popup.style.top = wb.yMax - hb.yMin + 6;
+            popup.style.minWidth = wb.width;
+            popup.style.backgroundColor = HudStyle.Dark ? new Color(0.13f, 0.14f, 0.17f, 0.98f) : new Color(1f, 1f, 1f, 0.99f);
+            HudStyle.Radius(popup, 10); HudStyle.Border(popup, 1, HudStyle.PanelLine); HudStyle.Pad(popup, 4, 4);
+            for (int i = 0; i < choices.Count; i++)
+            {
+                int k = i;
+                var item = HudStyle.MakeLabel(choices[i], 13, i == Index ? HudStyle.Accent : HudStyle.Text, i == Index);
+                item.pickingMode = PickingMode.Position;
+                item.style.height = 30; item.style.unityTextAlign = TextAnchor.MiddleLeft; item.style.whiteSpace = WhiteSpace.NoWrap;
+                HudStyle.Pad(item, 0, 10); HudStyle.Radius(item, 7);
+                item.RegisterCallback<PointerEnterEvent>(_ => item.style.backgroundColor = HudStyle.TileHover);
+                item.RegisterCallback<PointerLeaveEvent>(_ => item.style.backgroundColor = Color.clear);
+                item.RegisterCallback<PointerDownEvent>(ev =>
+                {
+                    ev.StopPropagation();
+                    bool changed = k != Index;
+                    SetIndexWithoutNotify(k);
+                    Close();
+                    if (changed) onChange?.Invoke(k);
+                });
+                popup.Add(item);
+            }
+            h.Add(popup);
+            Paint();
+            popupOpenChanged?.Invoke(true);
+        }
+
+        public void Close()
+        {
+            if (popup == null) return;
+            popup.RemoveFromHierarchy(); catcher?.RemoveFromHierarchy();
+            popup = null; catcher = null;
+            Paint();
+            popupOpenChanged?.Invoke(false);
+        }
+    }
+
+    // ------------------------------------------------------------------ 화물 아이콘
+    public class CargoIcon : VisualElement
+    {
+        readonly CargoKind kind;
+
+        public CargoIcon(CargoKind k, float size)
+        {
+            kind = k; pickingMode = PickingMode.Ignore;
+            style.width = size; style.height = size; style.flexShrink = 0;
+            generateVisualContent += Draw;
+        }
+
+        void Draw(MeshGenerationContext mgc)
+        {
+            var p = mgc.painter2D;
+            float s = contentRect.width;
+            if (s <= 0) return;
+            float u = s / 10f;
+            var col = CargoInfo.Tint(kind);
+            var dark = Color.Lerp(col, Color.black, 0.35f);
+            switch (kind)
+            {
+                case CargoKind.Pallet:
+                    Rect(p, 1.5f * u, 2f * u, 7f * u, 4.6f * u, col);                      // 짐
+                    Line(p, 1.5f * u, 4.3f * u, 8.5f * u, 4.3f * u, dark, u * 0.35f);
+                    Rect(p, 1f * u, 6.9f * u, 8f * u, 0.7f * u, new Color(0.72f, 0.55f, 0.35f));   // 파렛트 상판
+                    Rect(p, 1.4f * u, 7.6f * u, 1.2f * u, 1.1f * u, new Color(0.62f, 0.46f, 0.28f));
+                    Rect(p, 4.4f * u, 7.6f * u, 1.2f * u, 1.1f * u, new Color(0.62f, 0.46f, 0.28f));
+                    Rect(p, 7.4f * u, 7.6f * u, 1.2f * u, 1.1f * u, new Color(0.62f, 0.46f, 0.28f));
+                    break;
+                case CargoKind.Tote:
+                    p.fillColor = col; p.BeginPath();
+                    p.MoveTo(new Vector2(1.2f * u, 3f * u)); p.LineTo(new Vector2(8.8f * u, 3f * u));
+                    p.LineTo(new Vector2(8.1f * u, 8.4f * u)); p.LineTo(new Vector2(1.9f * u, 8.4f * u)); p.ClosePath(); p.Fill();
+                    Rect(p, 1f * u, 2.4f * u, 8f * u, 1f * u, dark);
+                    Rect(p, 4f * u, 4.2f * u, 2f * u, 0.7f * u, dark);
+                    break;
+                case CargoKind.Carton:
+                    Rect(p, 1.5f * u, 2.5f * u, 7f * u, 6f * u, col);
+                    Rect(p, 4.4f * u, 2.5f * u, 1.2f * u, 6f * u, new Color(0.95f, 0.88f, 0.70f));
+                    Line(p, 1.5f * u, 4.2f * u, 8.5f * u, 4.2f * u, dark, u * 0.25f);
+                    break;
+                case CargoKind.Drum:
+                    Rect(p, 2.4f * u, 1.6f * u, 5.2f * u, 7f * u, col, u * 1.2f);
+                    Line(p, 2.4f * u, 3.6f * u, 7.6f * u, 3.6f * u, dark, u * 0.4f);
+                    Line(p, 2.4f * u, 6.6f * u, 7.6f * u, 6.6f * u, dark, u * 0.4f);
+                    break;
+            }
+        }
+
+        static void Rect(Painter2D p, float x, float y, float w, float h, Color c, float r = 0)
+        {
+            p.fillColor = c; p.BeginPath();
+            if (r > 0)
+            {
+                p.MoveTo(new Vector2(x + r, y)); p.LineTo(new Vector2(x + w - r, y)); p.ArcTo(new Vector2(x + w, y), new Vector2(x + w, y + r), r);
+                p.LineTo(new Vector2(x + w, y + h - r)); p.ArcTo(new Vector2(x + w, y + h), new Vector2(x + w - r, y + h), r);
+                p.LineTo(new Vector2(x + r, y + h)); p.ArcTo(new Vector2(x, y + h), new Vector2(x, y + h - r), r);
+                p.LineTo(new Vector2(x, y + r)); p.ArcTo(new Vector2(x, y), new Vector2(x + r, y), r);
+            }
+            else { p.MoveTo(new Vector2(x, y)); p.LineTo(new Vector2(x + w, y)); p.LineTo(new Vector2(x + w, y + h)); p.LineTo(new Vector2(x, y + h)); }
+            p.ClosePath(); p.Fill();
+        }
+
+        static void Line(Painter2D p, float x0, float y0, float x1, float y1, Color c, float w)
+        {
+            p.strokeColor = c; p.lineWidth = w; p.BeginPath(); p.MoveTo(new Vector2(x0, y0)); p.LineTo(new Vector2(x1, y1)); p.Stroke();
+        }
+    }
+
     // ------------------------------------------------------------------ 타임라인 (0 ~ 30 s, 샷 경계 눈금, 끌어서 이동)
     public class TimelineBar : VisualElement
     {
