@@ -376,8 +376,9 @@ namespace EquipFX
         static (object, FieldInfo) ResolveField(Component v, object cfg, string name)
         {
             const BindingFlags F = BindingFlags.Instance | BindingFlags.Public;
-            if (name.StartsWith("view.")) return (v, v.GetType().GetField(name.Substring(5), F));
-            return cfg == null ? (null, null) : (cfg, cfg.GetType().GetField(name, F));
+            if (name.StartsWith("view.")) return ((object)v, v.GetType().GetField(name.Substring(5), F));
+            if (cfg == null) return ((object)null, (FieldInfo)null);
+            return (cfg, cfg.GetType().GetField(name, F));
         }
 
         static void SetField(object o, string name, bool value)
@@ -731,7 +732,8 @@ namespace EquipFX
             }
             foreach (var p in entry.pars)
             {
-                var (target, fi) = view != null ? ResolveField(view, cfg, p.field) : (null, null);
+                object target = null; FieldInfo fi = null;
+                if (view != null) (target, fi) = ResolveField(view, cfg, p.field);
                 string cur = map != null && map.TryGetValue(p.field, out var ov) ? ov.ToString(CultureInfo.InvariantCulture)
                            : fi != null && target != null ? Convert.ToString(fi.GetValue(target), CultureInfo.InvariantCulture) : "";
                 var row = Row(); HudStyle.Margin(row, 0, 0, 6, 0);
