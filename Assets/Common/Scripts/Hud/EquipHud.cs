@@ -98,6 +98,13 @@ namespace EquipFX
         Label cargoLbl;
         CargoKind modalPick = CargoKind.Pallet;
         bool modalStartFlow, siteDirty, overBanner;
+        // 메인 화면 탭: 3D / 물류흐름도(MFD)
+        VisualElement mfdPanel;
+        MfdView mfd;
+        Label mfdSummary;
+        Button tab3dBtn, tabMfdBtn;
+        bool mfdOn, overMfd;
+        string mfdSig;
         VisualElement siteBanner, siteBox;
         Label siteBannerLbl, paramTitle;
         Button siteBannerKeep;
@@ -620,7 +627,7 @@ namespace EquipFX
             var docRoot = doc.rootVisualElement;
             docRoot.Clear();
             cards.Clear(); kpiLabels.Clear(); plantRows.Clear(); plantUnitLbls.Clear(); paramFields.Clear(); partRows.Clear(); shownPart = null;
-            overTop = overLeft = overDash = overRight = overPopup = overModal = overBanner = false; HudInput.PointerOverUi = false;
+            overTop = overLeft = overDash = overRight = overPopup = overModal = overBanner = overMfd = false; mfdSig = null; HudInput.PointerOverUi = false;
             docRoot.pickingMode = PickingMode.Ignore;
             var font = HudFont.Get();
             if (font.HasValue) docRoot.style.unityFontDefinition = font.Value;
@@ -639,6 +646,7 @@ namespace EquipFX
             BuildLeftPanel(body);
             var spacer = new VisualElement { pickingMode = PickingMode.Ignore }; spacer.style.flexGrow = 1;
             body.Add(spacer);
+            BuildMfdPanel(spacer);
             BuildDashPanel(body);
             BuildRightPanel(body);
 
@@ -676,7 +684,7 @@ namespace EquipFX
             e.RegisterCallback<PointerLeaveEvent>(_ => { set(false); Upd(); });
         }
 
-        void UpdOver() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight || overPopup || overModal || overBanner;
+        void UpdOver() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight || overPopup || overModal || overBanner || overMfd;
 
         static VisualElement Panel()
         {
@@ -778,6 +786,12 @@ namespace EquipFX
 
             // 배치 도구
             layoutTools = Row(); layoutTools.style.flexGrow = 1; layoutTools.pickingMode = PickingMode.Position;
+            tab3dBtn = HudStyle.MakeButton("3D", () => SetMfd(false));
+            tab3dBtn.tooltip = "3D 배치 화면";
+            tabMfdBtn = HudStyle.MakeButton("물류흐름도", () => SetMfd(true));
+            tabMfdBtn.tooltip = "놓은 출입문 · 하역 수단 · 설비로 자동으로 만든 물류흐름도(MFD)";
+            layoutTools.Add(tab3dBtn); layoutTools.Add(tabMfdBtn);
+            layoutTools.Add(Gap(8));
             cargoChip = HudStyle.MakeButton("화물", ShowCargoModal);
             cargoChip.tooltip = "물류센터가 다루는 화물 바꾸기";
             layoutTools.Add(cargoChip);
@@ -888,6 +902,7 @@ namespace EquipFX
             {
                 if (ev.button != 0) return;
                 if (!LayoutMode || world == null) { Toast("배치 모드에서 쓸 수 있습니다"); return; }
+                SetMfd(false);
                 world.BeginDragMover(kind);
                 Toast($"{MoverInfo.Name(kind)}: 센터 바닥에 놓으세요 (누르기만 하면 문 근처에 자동 배치)");
             });
@@ -932,6 +947,7 @@ namespace EquipFX
             {
                 if (ev.button != 0) return;
                 if (!LayoutMode || world == null) return;
+                SetMfd(false);
                 if (world.BeginDrag(e)) Toast($"{e.name}: 바닥에 놓으세요 (Esc 취소)");
                 else Toast($"{e.name} 은(는) {CargoInfo.Name(world.Cargo)}을(를) 처리할 수 없습니다. 처리 화물: {CargoInfo.Names(e.cargo)}");
             });
@@ -1276,6 +1292,8 @@ namespace EquipFX
             animTools.style.display = LayoutMode ? DisplayStyle.None : DisplayStyle.Flex;
             layoutTools.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
             plantBox.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!LayoutMode && mfdOn) SetMfd(false);
+            UpdateMfdTabs();
             HudStyle.SetOn(modeLayoutBtn, LayoutMode);
             HudStyle.SetOn(modeAnimBtn, !LayoutMode && entry != null);
             selDashTitle.text = LayoutMode ? "선택한 설비" : "실시간";
@@ -1312,6 +1330,8 @@ namespace EquipFX
             if (!captionsOn && !LayoutMode) SetCaptions(false);
             if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
             if (LayoutMode) UpdatePlant();
+            if (mfdOn && world != null && world.DrawingSite) SetMfd(false);
+            if (mfdOn) UpdateMfd();
             if (siteDirty && !HudInput.Typing) { siteDirty = false; if (SiteSelected) RebuildSiteBox(); }
             if (world != null && world.SelectedMover != null && siteBox != null)
             {
@@ -1339,6 +1359,154 @@ namespace EquipFX
             if (LayoutMode && selModule != null)
                 posLbl.text = $"위치 X {selModule.Min.x:0} m, Z {selModule.Min.y:0} m   ·   크기 {selModule.Size.x:0.0} × {selModule.Size.y:0.0} m";
             UpdateControls();
+        }
+
+        // ---------------------------------------------------------------- 물류흐름도 (MFD)
+        void BuildMfdPanel(VisualElement host)
+        {
+            mfdPanel = Panel();
+            mfdPanel.style.flexGrow = 1; HudStyle.Margin(mfdPanel, 0, 10, 0, 10); HudStyle.Pad(mfdPanel, 14, 16);
+            mfdPanel.style.display = mfdOn ? DisplayStyle.Flex : DisplayStyle.None;
+            var head = Row();
+            var t = HudStyle.MakeLabel("물류흐름도", 15, HudStyle.Strong, true);
+            head.Add(t); head.Add(Gap(12));
+            mfdSummary = HudStyle.MakeLabel("", 12, HudStyle.Muted);
+            mfdSummary.style.flexGrow = 1;
+            head.Add(mfdSummary);
+            mfdPanel.Add(head);
+            var legend = HudStyle.MakeLabel("초록 입고 · 주황 출고 · 파랑 설비 · 점선은 설비 없이 바로 출고(크로스도킹) · 흐린 상자는 흐름에 참여하지 않음 · 상자를 누르면 선택", 11, HudStyle.Muted);
+            HudStyle.Margin(legend, 4, 0, 0, 0);
+            mfdPanel.Add(legend);
+            mfd = new MfdView();
+            mfd.clicked = OnMfdClick;
+            mfdPanel.Add(mfd);
+            host.Add(mfdPanel);
+            Hover(mfdPanel, b => overMfd = b);
+        }
+
+        void SetMfd(bool on)
+        {
+            if (on && (!LayoutMode || world == null)) return;
+            if (on && world.DrawingSite) { Toast("센터 영역을 먼저 정하세요"); return; }
+            mfdOn = on;
+            if (mfdPanel != null) mfdPanel.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!on) { overMfd = false; UpdOver(); }
+            else { mfdSig = null; UpdateMfd(); }
+            UpdateMfdTabs();
+        }
+
+        void UpdateMfdTabs()
+        {
+            if (dashPanel != null) dashPanel.style.display = mfdOn ? DisplayStyle.None : DisplayStyle.Flex;
+            if (tab3dBtn == null) return;
+            HudStyle.SetOn(tab3dBtn, !mfdOn); HudStyle.SetOn(tabMfdBtn, mfdOn);
+        }
+
+        static string BayStatus(Traffic tr, int door)
+        {
+            foreach (var b in tr.bays)
+            {
+                if (b.door != door) continue;
+                return b.state switch
+                {
+                    1 => "트럭 오는 중",
+                    2 => "윙 여는 중",
+                    3 => $"상하차 {b.done}/{b.units}" + (b.late ? " · 마감 초과" : ""),
+                    4 => "윙 닫는 중",
+                    5 => "트럭 출발",
+                    _ => "트럭 기다림",
+                };
+            }
+            return "—";
+        }
+
+        string MoverSub(CargoKind cargo, out bool any)
+        {
+            int fk = 0, wk = 0, busy = 0; any = false;
+            foreach (var m in world.Traffic.movers)
+            {
+                if (m.kind == MoverInfo.Forklift) fk++; else wk++;
+                if (MoverInfo.Handles(m.kind, cargo)) any = true;
+                if (m.bay != null) busy++;
+            }
+            if (fk + wk == 0) return "없음 · 라이브러리 '하역 수단'에서 추가";
+            var txt = new List<string>();
+            if (fk > 0) txt.Add($"지게차 {fk}");
+            if (wk > 0) txt.Add($"작업자 {wk}" + (MoverInfo.Handles(MoverInfo.Worker, cargo) ? "" : "(이 화물 불가)"));
+            return string.Join(" · ", txt) + $" · 일하는 중 {busy}";
+        }
+
+        string ModuleSub(PlacedModule m)
+        {
+            if (!world.CanHandle(m.entry)) return $"{CargoInfo.Short(world.Cargo)} 처리 불가";
+            if (!m.built || m.view == null || !m.entry.ready(m.view)) return "설치 중…";
+            return $"{m.entry.throughput(m.view).ToString("N0", CultureInfo.InvariantCulture)} {m.entry.throughputUnit}";
+        }
+
+        // 놓인 것이 바뀌면 그래프를 다시 만들고, 아니면 숫자만 고침
+        void UpdateMfd()
+        {
+            if (mfd == null || world == null) return;
+            var s = world.Site; var tr = world.Traffic; var cargo = world.Cargo;
+            var sb = new System.Text.StringBuilder();
+            sb.Append((int)cargo).Append('|');
+            foreach (var d in s.doors) sb.Append(d.kind);
+            sb.Append('|');
+            foreach (var m in tr.movers) sb.Append(m.kind);
+            sb.Append('|');
+            foreach (var m in world.modules) if (m != null) sb.Append(m.entry.id).Append(world.CanHandle(m.entry) ? '+' : '-').Append(',');
+            string sig = sb.ToString();
+            string moverText = MoverSub(cargo, out bool anyMover);
+            if (sig != mfdSig)
+            {
+                mfdSig = sig;
+                var ns = new List<MfdNode>(); var es = new List<MfdEdge>();
+                Color inC = FloorPlan.InCol, outC = FloorPlan.OutCol, eqC = HudStyle.Accent;
+                ns.Add(new MfdNode { id = "gate", col = 0, title = "입고 지점", sub = $"화주 화물 · {CargoInfo.Short(cargo)}", color = inC });
+                ns.Add(new MfdNode { id = "unload", col = 2, title = "하역 (입고)", sub = moverText, color = inC, dim = !anyMover });
+                ns.Add(new MfdNode { id = "load", col = 4, title = "상차 (출고)", sub = moverText, color = outC, dim = !anyMover });
+                ns.Add(new MfdNode { id = "exit", col = 6, title = "출고 지점", sub = "화주 출고", color = outC });
+                for (int i = 0; i < s.doors.Count; i++)
+                {
+                    var d = s.doors[i]; string id = "door" + i;
+                    bool inbound = d.kind == 0;
+                    ns.Add(new MfdNode { id = id, col = inbound ? 1 : 5, title = Plan.DoorName(s, i), sub = BayStatus(tr, i), color = inbound ? inC : outC });
+                    if (inbound) { es.Add(new MfdEdge { a = "gate", b = id, color = inC }); es.Add(new MfdEdge { a = id, b = "unload", color = inC, dashed = !anyMover }); }
+                    else { es.Add(new MfdEdge { a = "load", b = id, color = outC, dashed = !anyMover }); es.Add(new MfdEdge { a = id, b = "exit", color = outC }); }
+                }
+                int ok = 0;
+                for (int k = 0; k < world.modules.Count; k++)
+                {
+                    var m = world.modules[k]; if (m == null) continue;
+                    bool can = world.CanHandle(m.entry);
+                    string id = "mod" + k;
+                    ns.Add(new MfdNode { id = id, col = 3, title = m.entry.name, sub = ModuleSub(m), color = eqC, dim = !can });
+                    if (!can) continue;
+                    ok++;
+                    es.Add(new MfdEdge { a = "unload", b = id, color = eqC });
+                    es.Add(new MfdEdge { a = id, b = "load", color = eqC });
+                }
+                if (ok == 0) es.Add(new MfdEdge { a = "unload", b = "load", color = eqC, dashed = true });
+                mfd.SetGraph(ns, es);
+            }
+            else
+            {
+                mfd.SetSub("unload", moverText); mfd.SetSub("load", moverText);
+                for (int i = 0; i < s.doors.Count; i++) mfd.SetSub("door" + i, BayStatus(tr, i));
+                for (int k = 0; k < world.modules.Count; k++) if (world.modules[k] != null) mfd.SetSub("mod" + k, ModuleSub(world.modules[k]));
+            }
+            if (mfdSummary != null)
+                mfdSummary.text = $"잔고 {tr.balance.ToString("N0", CultureInfo.InvariantCulture)}만원 · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
+        }
+
+        void OnMfdClick(string id)
+        {
+            if (world == null) return;
+            if (id.StartsWith("door") && int.TryParse(id.Substring(4), out int di) && di < world.Site.doors.Count) world.SelectDoor(di);
+            else if (id.StartsWith("mod") && int.TryParse(id.Substring(3), out int mi) && mi < world.modules.Count && world.modules[mi] != null) world.Select(world.modules[mi]);
+            else if ((id == "unload" || id == "load") && world.Traffic.movers.Count > 0) world.SelectMover(world.Traffic.movers[0]);
+            else if (id == "unload" || id == "load") Toast("왼쪽 라이브러리 '하역 수단'에서 지게차나 작업자를 끌어다 센터 안에 놓으세요");
+            else if (id == "gate" || id == "exit") Toast("입고·출고 지점은 부지 서쪽 진입로에 있습니다");
         }
 
         void UpdatePlant()
