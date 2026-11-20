@@ -241,9 +241,10 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 - AutoStore 로봇: 상판에 흰 번호(01~08), 도장을 밝은 빨강으로.
 - Blender 스크립트의 카메라(CAM_KEYS)는 바꾸지 않았습니다. 최종 영상은 Unity 녹화 메뉴를 쓰세요.
 
+
 ---
 
-# Libiao T-Sort 핑거형 로봇 소터 — 같은 방식의 여섯 번째 장면
+# Libiao T-Sort 핑거형 로봇 소터 — 같은 방식의 장면
 
 넓은 메인 데크에서 빗살처럼 뻗은 핑거 6개 위를 노란 로봇 30대가 달립니다. 왼쪽 투입 스테이션 4곳에서 작업자가 스캔한 소포를 받아 목적지 슈트 옆까지 가서 트레이를 기울이면, 소포가 핑거 사이 틈으로 떨어져 바닥의 슈트 통(168개)에 쌓입니다. 핑거는 나가는 차선과 돌아오는 차선 2차선이고 끝에서 U턴합니다. 같은 Unity 프로젝트 안에 **애니메이션 → T-Sorter** 메뉴로 들어 있습니다. 기존 Libiao 장면(격자형 데크 + 아래층 자루)과는 다른, 공식 T-Sort 솔루션 그림의 핑거형 플랫폼입니다.
 
@@ -264,6 +265,21 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 | `docs/tsorter-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
 
 **Unity**: GitHub에서 PR을 머지한 뒤 `git pull`, 프로젝트를 열고 메뉴 **애니메이션 → T-Sorter → Open T-Sorter Scene** → **Play**. 30초 영상은 **애니메이션 → T-Sorter → Record 30s Movie (MP4, 1920x1080)** → `Recordings/tsorter_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(600초 워밍업 직후, seed 3)에서 시작합니다. 캡션은 씬의 `TSorterView` → `Show Caption` 으로 끌 수 있습니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --still 520 --gpu
+
+# 30초 영상 (1920x1080, 30fps). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_tsorter_trace.js --robots 20 --seed 5  (카메라 동선은 seed 3, warmup 600 기준)
+```
+
+결과: 로봇 30대에서 시간당 약 2,150건 (공개 프로필 "2000 Parts per hour" 와 비슷한 규모). 핑거형 플랫폼 구성, 투입 스테이션 수동 투입 + 자동 스캔, 로봇 480×380×230 mm는 공개 자료이고 셀 피치·데크 높이·핑거 길이·속도·슈트 통 크기는 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/tsorter-research.md](docs/tsorter-research.md).
+
 
 ---
 
@@ -289,6 +305,21 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 
 **Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 셔틀랙 → Open Shuttle Rack Scene** → **Play**. 30초 영상은 **애니메이션 → 셔틀랙 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/shuttlerack_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1,200초 워밍업 직후, seed 3)에서 시작하고, 카메라가 10단 토트 하나를 셔틀 → 출고 버퍼 → 리프트 → 컨베이어 → 스테이션까지 따라갑니다. 장비 이름과 단계 자막이 영상에 들어갑니다.
 
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (400 = 통로 입구, 470 = 리프트, 700 = 스테이션)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --still 400,470,700
+
+# 30초 영상 (GPU가 없으면 EEVEE: --engine eevee --samples 16 --res 1280x720)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_shuttle_trace.js --seed 5 --warmup 900  (카메라는 새 주인공 토트에 맞춰 다시 계산됨)
+```
+
+결과: 셔틀 42대, 리프트 6대, 스테이션 3곳에서 약 1,800 토트/h, 평균 리드타임 32초. 병목은 리프트(가동률 73%)이고 셔틀 가동률은 19%입니다. 셔틀 4 m/s·2 m/s², 토트 600×400 mm는 공개 자료의 일반적인 값이고 리프트 속도·단 간격·버퍼 길이 등은 가정입니다. 자세한 내용은 [docs/shuttle-research.md](docs/shuttle-research.md).
+
+
 ---
 
 # Libiao AirRob — 같은 방식의 장면 (랙 면 레일 로봇 + 바닥 이송 로봇)
@@ -313,9 +344,24 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 
 **Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → AirRob → Open AirRob Scene** → **Play**. 30초 영상은 **애니메이션 → AirRob → Record 30s Movie (MP4, 1920x1080)** → `Recordings/airrob_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1342초 워밍업 직후, seed 3)에서 시작해 같은 장면이 나옵니다.
 
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (360 프레임 = 맨 위 단에서 훅으로 토트 당기기)
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --still 360
+
+# 30초 영상 (GPU 권장). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_airrob_trace.js --bots 12 --seed 5  (카메라 동선은 seed 3, warmup 1342 기준)
+```
+
+결과: 바닥 로봇 16대, 주문 360 /h 에서 약 320 토트/h, 평균 리드타임 약 190초, AirRob 가동률 72%. 통로 4개에서 약 380 토트/h가 한계이고 병목은 AirRob 입니다. AirRob 폭 764 mm·깊이 820 mm, 수평 2 m/s·수직 1 m/s, 당기기·밀기 4.5 s, 토트 530×410 mm, 통로 850 mm는 공개 수치이고 마스트·훅 형상, 바닥 로봇, 단 간격, 색은 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/airrob-research.md](docs/airrob-research.md).
+
+
 ---
 
-# 캐러셀 (수평형 + 수직형) — 같은 방식의 여섯 번째 장면
+# 캐러셀 (수평형 + 수직형) — 같은 방식의 장면
 
 한 장면에 두 가지 회전 선반을 나란히 놓았습니다. 왼쪽은 **수평형 캐러셀** 2대로 이루어진 피킹 포드입니다. 타원 궤도를 도는 6단 선반 캐리어 26개가 가까운 방향으로 돌아 목표 캐리어를 앞쪽 끝(피킹면)에 세우고, 작업자 한 명이 한 대에서 꺼내는 동안 다른 한 대는 다음 캐리어로 미리 돌아갑니다. 오른쪽은 **수직형 캐러셀**로, 높이 약 6.9 m 캐비닛 안에서 폭 2.45 m 트레이 20개가 위아래로 순환하며 목표 트레이를 허리 높이 작업창에 세웁니다. 두 장비 모두 피킹 라이트가 꺼낼 칸을, 풋 라이트가 넣을 주문 토트를 가리킵니다. 영상에는 장비 이름 자막이 들어가며, 같은 Unity 프로젝트 안에 **애니메이션 → 캐러셀** 메뉴로 들어 있습니다.
 
@@ -338,6 +384,22 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 | `docs/carousel-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
 
 **Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 캐러셀 → Open Carousel Scene** → **Play**. 30초 영상은 **애니메이션 → 캐러셀 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/carousel_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(300초 워밍업 직후, seed 22)에서 시작해 같은 장면이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (181 프레임 = 수평형 피킹면, 586 프레임 = 수직형 작업창)
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --still 181,586 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 carousel_30s.mp4 로 합쳐짐. 자막은 Pillow가 있을 때 PNG에 합성
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# GPU가 없으면 EEVEE: --anim --engine eevee --samples 16 --res 1280x720
+# 다른 시뮬레이션 장면: node tools/export_carousel_trace.js --seed 5  (카메라 동선은 seed 22, warmup 300 기준)
+```
+
+결과 (seed 1~3 평균, 1시간): 수평형 포드 약 570 줄/h (리드타임 119초, 작업자 가동률 63%, 공개 수치 "최대 550 줄/h"와 같은 수준), 수직형 약 320 줄/h (0.20 m/s 기준 상한에 가까움). 회전 속도·캐리어 치수·피킹 시간은 공개 카탈로그의 일반적인 범위에서 잡은 가정이며 특정 제조사 도면이 아닙니다. 자세한 내용은 [docs/carousel-research.md](docs/carousel-research.md).
+
 
 ---
 
@@ -366,59 +428,6 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 **Blender** (저장소 루트에서):
 
 ```powershell
-# 장면 생성 + 정지 이미지
-blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --still 520 --gpu
-
-# 30초 영상 (1920x1080, 30fps). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
-blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --anim --gpu --res 1920x1080 --samples 128
-
-# 다른 시뮬레이션 장면: node tools/export_tsorter_trace.js --robots 20 --seed 5  (카메라 동선은 seed 3, warmup 600 기준)
-```
-
-결과: 로봇 30대에서 시간당 약 2,150건 (공개 프로필 "2000 Parts per hour" 와 비슷한 규모). 핑거형 플랫폼 구성, 투입 스테이션 수동 투입 + 자동 스캔, 로봇 480×380×230 mm는 공개 자료이고 셀 피치·데크 높이·핑거 길이·속도·슈트 통 크기는 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/tsorter-research.md](docs/tsorter-research.md).
-
----
-
-# 장면 생성 + 정지 이미지 (400 = 통로 입구, 470 = 리프트, 700 = 스테이션)
-blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --still 400,470,700
-
-# 30초 영상 (GPU가 없으면 EEVEE: --engine eevee --samples 16 --res 1280x720)
-blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --anim --gpu --res 1920x1080 --samples 128
-
-# 다른 시뮬레이션 장면: node tools/export_shuttle_trace.js --seed 5 --warmup 900  (카메라는 새 주인공 토트에 맞춰 다시 계산됨)
-```
-
-결과: 셔틀 42대, 리프트 6대, 스테이션 3곳에서 약 1,800 토트/h, 평균 리드타임 32초. 병목은 리프트(가동률 73%)이고 셔틀 가동률은 19%입니다. 셔틀 4 m/s·2 m/s², 토트 600×400 mm는 공개 자료의 일반적인 값이고 리프트 속도·단 간격·버퍼 길이 등은 가정입니다. 자세한 내용은 [docs/shuttle-research.md](docs/shuttle-research.md).
-
----
-
-# 장면 생성 + 정지 이미지 (360 프레임 = 맨 위 단에서 훅으로 토트 당기기)
-blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --still 360
-
-# 30초 영상 (GPU 권장). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
-blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --anim --gpu --res 1920x1080 --samples 128
-
-# 다른 시뮬레이션 장면: node tools/export_airrob_trace.js --bots 12 --seed 5  (카메라 동선은 seed 3, warmup 1342 기준)
-```
-
-결과: 바닥 로봇 16대, 주문 360 /h 에서 약 320 토트/h, 평균 리드타임 약 190초, AirRob 가동률 72%. 통로 4개에서 약 380 토트/h가 한계이고 병목은 AirRob 입니다. AirRob 폭 764 mm·깊이 820 mm, 수평 2 m/s·수직 1 m/s, 당기기·밀기 4.5 s, 토트 530×410 mm, 통로 850 mm는 공개 수치이고 마스트·훅 형상, 바닥 로봇, 단 간격, 색은 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/airrob-research.md](docs/airrob-research.md).
-
----
-
-# 장면 생성 + 정지 이미지 (181 프레임 = 수평형 피킹면, 586 프레임 = 수직형 작업창)
-blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --still 181,586 --gpu
-
-# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 carousel_30s.mp4 로 합쳐짐. 자막은 Pillow가 있을 때 PNG에 합성
-blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --anim --gpu --res 1920x1080 --samples 128
-
-# GPU가 없으면 EEVEE: --anim --engine eevee --samples 16 --res 1280x720
-# 다른 시뮬레이션 장면: node tools/export_carousel_trace.js --seed 5  (카메라 동선은 seed 22, warmup 300 기준)
-```
-
-결과 (seed 1~3 평균, 1시간): 수평형 포드 약 570 줄/h (리드타임 119초, 작업자 가동률 63%, 공개 수치 "최대 550 줄/h"와 같은 수준), 수직형 약 320 줄/h (0.20 m/s 기준 상한에 가까움). 회전 속도·캐리어 치수·피킹 시간은 공개 카탈로그의 일반적인 범위에서 잡은 가정이며 특정 제조사 도면이 아닙니다. 자세한 내용은 [docs/carousel-research.md](docs/carousel-research.md).
-
----
-
 # 장면 생성 + 정지 이미지 (380 프레임 = 크레인을 따라 달리는 장면)
 blender -b -P blender/stackercrane_blender.py -- --out blender/out/stackercrane --trace blender/stackercrane_trace.json --still 380 --gpu
 
