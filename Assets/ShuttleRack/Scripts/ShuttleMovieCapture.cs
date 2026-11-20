@@ -42,13 +42,15 @@ namespace ShuttleRack
             view.cinematicCamera = true;
             Time.captureFramerate = fps;
             IsRecording = true;
-            rt = EquipFX.CameraFX.MakeRecordTarget(width, height);   // 32비트 깊이 (원거리 깜빡임 방지)
-            cam.targetTexture = rt;
+            // 공용 녹화 화질 (메뉴 애니메이션 > 녹화 화질): 해상도·MSAA·슈퍼샘플링·그림자. 32비트 깊이 유지 (원거리 깜빡임 방지)
+            var rs = EquipFX.RecordSession.Begin(cam);
+            width = rs.Width; height = rs.Height; rt = rs.Frame;
+            cam.targetTexture = rs.CameraTarget;
             ShuttleCaption cap = captions ? BuildCaptions() : null;
             for (int i = 0; i < 5; i++) yield return null;
             var cc = cam.GetComponent<ShuttleCamera>(); if (cc != null) cc.Restart();
             view.simSpeed = 1f;
-            var path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", outputPath));
+            var path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", EquipFX.RecordQuality.DecoratePath(outputPath)));
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
             var attr = new VideoTrackAttributes
@@ -62,6 +64,7 @@ namespace ShuttleRack
                 for (frame = 0; frame < total; frame++)
                 {
                     yield return new WaitForEndOfFrame();
+                    rs.Resolve();   // 슈퍼샘플·MSAA → 출력 해상도
                     var prev = RenderTexture.active; RenderTexture.active = rt;
                     tex.ReadPixels(new Rect(0, 0, width, height), 0, 0, false);
                     RenderTexture.active = prev;
@@ -75,7 +78,7 @@ namespace ShuttleRack
                     enc.AddFrame(tex);
                 }
             }
-            cam.targetTexture = null; IsRecording = false; Time.captureFramerate = 0;
+            rs.End(); IsRecording = false; Time.captureFramerate = 0;
             Debug.Log($"[ShuttleRack] 영상 저장 완료: {path}");
             EditorUtility.RevealInFinder(path);
             EditorApplication.isPlaying = false;

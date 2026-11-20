@@ -143,11 +143,12 @@ namespace EquipFX
         }
 
         // 녹화용 RenderTexture: 32비트 부동소수 깊이 (리버스 Z 와 함께 원거리 정밀도가 크게 좋아짐)
-        public static RenderTexture MakeRecordTarget(int w, int h)
+        // msaa > 1 이면 카메라가 이 텍스처에 MSAA 로 그립니다 (RecordSession 이 사용).
+        public static RenderTexture MakeRecordTarget(int w, int h, int msaa = 1)
         {
             var desc = new RenderTextureDescriptor(w, h, RenderTextureFormat.ARGB32, 0)
             {
-                sRGB = true, msaaSamples = 1,
+                sRGB = true, msaaSamples = Mathf.Max(1, msaa),
                 depthStencilFormat = UnityEngine.Experimental.Rendering.GraphicsFormat.D32_SFloat_S8_UInt,
             };
             var rt = new RenderTexture(desc); rt.Create();
