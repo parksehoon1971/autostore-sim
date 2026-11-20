@@ -1741,8 +1741,15 @@ namespace EquipFX
             {
                 var s = world.Site;
                 var inC = FloorPlan.InCol; inC.a = 0.92f; var outC = FloorPlan.OutCol; outC.a = 0.92f;
-                Tag(cam, new Vector3(Plan.InPoint.x, 2.5f, Plan.InPoint.y), $"입고 지점 · {CargoInfo.Short(world.Cargo)}", inC, 12);
-                Tag(cam, new Vector3(Plan.OutPoint.x, 2.5f, Plan.OutPoint.y), "출고 지점", outC, 12);
+                Tag(cam, new Vector3(Plan.InPoint.x + 1.5f, 2.2f, Plan.InPoint.y), $"입고 지점 · {CargoInfo.Short(world.Cargo)}", inC, 12);
+                Tag(cam, new Vector3(Plan.OutPoint.x + 1.5f, 5.2f, Plan.OutPoint.y), "출고 지점", outC, 12);
+                var yardSides = new HashSet<int>();
+                foreach (var d in s.doors)
+                    if (yardSides.Add(d.side))
+                    {
+                        var ar = Plan.Apron(s, d.side);
+                        Tag(cam, new Vector3(ar.center.x, 0.6f, ar.center.y), "트럭 주차장", new Color(0.22f, 0.24f, 0.28f, 0.8f), 11);
+                    }
                 for (int i = 0; i < s.doors.Count; i++)
                 {
                     var d = s.doors[i];

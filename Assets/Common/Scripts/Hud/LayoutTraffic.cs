@@ -315,18 +315,16 @@ namespace EquipFX
             var door = s.doors[b.door];
             var dp = Plan.DoorPoint(s, door); var n = Plan.Outward(door.side);
             Vector3 V(Vector2 p) => new Vector3(p.x, 0, p.y);
-            var pt = b.inbound ? Plan.InPoint : Plan.OutPoint;
-            var A = dp + n * (Truck.L / 2 + Plan.BayLen + 3f);
             var D = dp + n * (Truck.L / 2 + 0.25f);
-            var corner = door.side < 2 ? new Vector2(pt.x, A.y) : new Vector2(A.x, pt.y);
             switch (b.state)
             {
                 case 0:
                     b.timer -= dt;
                     if (b.timer > 0) break;
                     b.truck = new Truck(root, s.h, cabColors[rng.Next(cabColors.Length)]);
-                    b.truck.root.position = V(pt);
-                    b.truck.root.rotation = Quaternion.LookRotation(V(corner - pt).sqrMagnitude > 0.01f ? V(corner - pt) : V(A - pt));
+                    var arrive = Plan.Route(s, door, true);
+                    b.truck.root.position = V(arrive[0]);
+                    b.truck.root.rotation = Quaternion.LookRotation(V(arrive.Count > 1 ? arrive[1] - arrive[0] : Vector2.right));
                     b.units = 4 + rng.Next(Truck.Rows * Truck.Cols - 3);
                     b.done = 0; b.late = false; b.noticed = false;
                     if (b.inbound)
@@ -336,7 +334,10 @@ namespace EquipFX
                             CargoModels.Build(u, cargo, i);
                             b.truck.Put(i, u);
                         }
-                    b.truck.SetPath((V(corner), false), (V(A), false), (V(D), true));
+                    var go = new List<(Vector3, bool)>();
+                    for (int i = 1; i < arrive.Count; i++) go.Add((V(arrive[i]), false));
+                    go.Add((V(D), true));
+                    b.truck.SetPath(go.ToArray());
                     b.state = 1;
                     break;
                 case 1:
@@ -374,7 +375,10 @@ namespace EquipFX
                 case 4:
                     if (b.truck.SetWing(0f, dt))
                     {
-                        b.truck.SetPath((V(A), false), (V(corner), false), (V(pt), false));
+                        var leave = Plan.Route(s, door, false);
+                        var back = new List<(Vector3, bool)>();
+                        foreach (var q in leave) back.Add((V(q), false));
+                        b.truck.SetPath(back.ToArray());
                         b.state = 5;
                     }
                     break;

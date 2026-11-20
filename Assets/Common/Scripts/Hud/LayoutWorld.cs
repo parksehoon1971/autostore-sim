@@ -216,7 +216,7 @@ namespace EquipFX
             floor.transform.position = new Vector3(FloorX0 + floorW / 2, -0.05f, FloorZ0 + floorD / 2);
             floor.GetComponent<MeshRenderer>().sharedMaterial = floorMat;
             Destroy(floor.GetComponent<Collider>());
-            focus = new Vector3(70f, 0, 40f); dist = 150f; pitch = 55f; yaw = 20f;
+            focus = new Vector3(45f, 0, 40f); dist = 160f; pitch = 55f; yaw = 20f;
 
             // 조명
             var sunGo = new GameObject("Sun"); sunGo.transform.SetParent(transform, false);
@@ -516,7 +516,7 @@ namespace EquipFX
         {
             var s = Site.Clone();
             int side = -1; foreach (var d in s.doors) if (d.kind == kind) { side = d.side; break; }
-            if (side < 0) side = Plan.FacingSide(s, kind == 0 ? Plan.InPoint : Plan.OutPoint);
+            if (side < 0) side = Plan.DockSide(s);
             // 같은 벽에서 다른 문과 가장 멀리 떨어진 자리
             float len = Plan.WallLen(s, side), best = len / 2, bestGap = -1;
             for (float p = Plan.DoorW; p < len - Plan.DoorW; p += 1f)
