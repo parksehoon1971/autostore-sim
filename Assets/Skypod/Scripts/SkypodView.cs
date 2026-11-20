@@ -265,16 +265,19 @@ namespace Skypod
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -485,6 +488,7 @@ namespace Skypod
                     var go = Instantiate(prefab, root, false);
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                     FitScale(go, RobotH + 0.08f);
                     foreach (var t in go.GetComponentsInChildren<Transform>()) if (t.name.StartsWith("Arm")) arm = t;
                 }
@@ -542,7 +546,7 @@ namespace Skypod
                 {
                     go = new GameObject("ToteTpl_" + v); go.transform.SetParent(holder, false);
                     var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
-                    M.Remap(m); FitScale(m, (float)config.toteH + 0.01f);
+                    M.Remap(m); FitScale(m, (float)config.toteH + 0.01f); EquipFX.MeshFix.ResolveModel(m);
                 }
                 else go = FallbackTote(v, holder);
                 tpl.Add(go);
@@ -588,7 +592,7 @@ namespace Skypod
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.75f, 0.77f, 0.8f);
-            Cam.nearClipPlane = 0.02f; Cam.farClipPlane = 200f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.08f, 120f);   // near 0.02 → 0.08: 원거리 깊이 정밀도 향상 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -614,7 +618,20 @@ namespace Skypod
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.08f);
             var wb = prof.Add<WhiteBalance>(true); wb.temperature.Override(-3f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            // 모던 자막 (설비명 타이틀 + 샷 설명)
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "Rack-Climbing Robot ASRS",
+                name = "Exotec Skypod",
+                korean = "랙 등반 로봇 자동창고",
+                spec = $"로봇 {config.robots}대  ·  통로 {config.aisles}개  ·  {config.levels}단 랙  ·  스테이션 {config.stations.Length}곳",
+                accent = new Color(0.15f, 0.85f, 0.80f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

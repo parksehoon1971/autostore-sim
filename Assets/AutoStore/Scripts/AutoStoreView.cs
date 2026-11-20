@@ -93,12 +93,14 @@ namespace AutoStore
                 rail = Lit("RailAnodized", new Color(0.42f, 0.43f, 0.45f), 0.9f, 0.66f);
                 bin = Lit("BinPlastic", new Color(0.105f, 0.11f, 0.12f), 0f, 0.55f);
                 binBlue = Lit("BinPlasticBlue", new Color(0.03f, 0.14f, 0.42f), 0f, 0.58f);
-                red = Coat("RobotPaintRed", new Color(0.62f, 0.015f, 0.02f), 0.68f);
-                dark = Lit("RobotTopBlack", new Color(0.025f, 0.025f, 0.028f), 0f, 0.45f);
+                // 로봇 도장: 실제 R5 처럼 밝은 빨강 (이전 0.62/0.015/0.02 는 어두운 조명에서 검붉게 보였음) + 아주 약한 자체 발광으로 그림자 속에서도 색이 살아 있게
+                red = Coat("RobotPaintRed", new Color(0.88f, 0.07f, 0.05f), 0.74f);
+                red.SetColor("_EmissionColor", new Color(0.88f, 0.07f, 0.05f) * 0.10f); red.EnableKeyword("_EMISSION");
+                dark = Lit("RobotTopBlack", new Color(0.075f, 0.078f, 0.085f), 0f, 0.5f);
                 rubber = Lit("Rubber", new Color(0.02f, 0.02f, 0.02f), 0f, 0.15f);
                 steel = Lit("Steel", new Color(0.6f, 0.6f, 0.62f), 1f, 0.75f);
                 yellow = Lit("SafetyYellow", new Color(0.9f, 0.62f, 0.02f), 0f, 0.5f);
-                ledGreen = Emissive("LEDGreen", new Color(0.1f, 1f, 0.35f), 6f);
+                ledGreen = Emissive("LEDGreen", new Color(0.1f, 1f, 0.35f), 9f);
                 port = Lit("PowderCoatWhite", new Color(0.78f, 0.79f, 0.80f), 0f, 0.45f);
                 screen = Emissive("Screen", new Color(0.15f, 0.45f, 0.9f), 1.5f);
                 wall = Lit("WallPanel", new Color(0.30f, 0.33f, 0.37f), 0.3f, 0.5f);
@@ -109,6 +111,18 @@ namespace AutoStore
             }
 
             static Shader LitShader => Shader.Find("Universal Render Pipeline/Lit");
+
+            // 로봇 상판 번호 (흰 글자, 배경 투명 → 알파 클립)
+            public Material Number(int n)
+            {
+                var tex = EquipFX.CaptionOverlay.MakeLabelTexture(n.ToString("00"), 512, 256, Color.white);
+                var m = new Material(LitShader) { name = "RobotNumber_" + n };
+                m.SetTexture("_BaseMap", tex); m.SetColor("_BaseColor", new Color(0.95f, 0.95f, 0.93f));
+                m.SetFloat("_Smoothness", 0.45f); m.SetFloat("_Metallic", 0f);
+                m.SetFloat("_AlphaClip", 1f); m.SetFloat("_Cutoff", 0.5f); m.EnableKeyword("_ALPHATEST_ON");
+                m.SetColor("_EmissionColor", Color.white * 0.25f); m.SetTexture("_EmissionMap", tex); m.EnableKeyword("_EMISSION");
+                return m;
+            }
 
             Material Lit(string name, Color c, float metal, float smooth)
             {
@@ -209,6 +223,7 @@ namespace AutoStore
             if (!prefab) return null;
             var go = Instantiate(prefab);
             M.Remap(go);
+            EquipFX.MeshFix.ResolveModel(go);
             return go;
         }
 
@@ -240,10 +255,10 @@ namespace AutoStore
             var env = new GameObject("Building").transform;
             const float S = 40f, Hh = 11f;
             Cube("Floor", new Vector3(S, 0.02f, S), new Vector3(cx, -0.01f, cz), M.floor, env);
-            Cube("Line", new Vector3(c.nx * c.cellX + 1.6f, 0.004f, 0.08f), new Vector3(cx, 0.002f, -2f), M.yellow, env, false);
-            Cube("Line", new Vector3(c.nx * c.cellX + 1.6f, 0.004f, 0.08f), new Vector3(cx, 0.002f, c.ny * c.cellY + 0.8f), M.yellow, env, false);
-            Cube("Line", new Vector3(0.08f, 0.004f, c.ny * c.cellY + 2.8f), new Vector3(-0.8f, 0.002f, cz - 0.6f), M.yellow, env, false);
-            Cube("Line", new Vector3(0.08f, 0.004f, c.ny * c.cellY + 2.8f), new Vector3(c.nx * c.cellX + 0.8f, 0.002f, cz - 0.6f), M.yellow, env, false);
+            Cube("Line", new Vector3(c.nx * c.cellX + 1.6f, 0.006f, 0.08f), new Vector3(cx, 0.003f, -2f), M.yellow, env, false);
+            Cube("Line", new Vector3(c.nx * c.cellX + 1.6f, 0.006f, 0.08f), new Vector3(cx, 0.003f, c.ny * c.cellY + 0.8f), M.yellow, env, false);
+            Cube("Line", new Vector3(0.08f, 0.006f, c.ny * c.cellY + 2.8f), new Vector3(-0.8f, 0.003f, cz - 0.6f), M.yellow, env, false);
+            Cube("Line", new Vector3(0.08f, 0.0065f, c.ny * c.cellY + 2.8f), new Vector3(c.nx * c.cellX + 0.8f, 0.00325f, cz - 0.6f), M.yellow, env, false);
             Cube("WallBack", new Vector3(S, Hh, 0.2f), new Vector3(cx, Hh / 2, cz + 12), M.wall, env);
             Cube("WallFront", new Vector3(S, Hh, 0.2f), new Vector3(cx, Hh / 2, cz - 16), M.wall, env);
             Cube("WallLeft", new Vector3(0.2f, Hh, S), new Vector3(cx - 14, Hh / 2, cz), M.wall, env);
@@ -286,22 +301,25 @@ namespace AutoStore
         {
             var c = config; var g = new GameObject("Grid").transform;
             float H = topY, post = 0.045f, rh = 0.07f, W = c.nx * c.cellX, D = c.ny * c.cellY;
+            // 깜빡임 방지: 기둥(은색) 윗면이 레일(회색) 윗면과 같은 높이 H 에 겹쳐 있었음 → 기둥을 4 mm 낮춤.
+            // Y 방향 레일도 X 방향 레일과 교차점에서 윗면이 겹치므로 2 mm 낮춤 (같은 재질이라도 그림자/반사 차이로 반짝임)
+            float Hp = H - 0.004f, dz = 0.002f;
             for (int i = 0; i <= c.nx; i++)
                 for (int j = 0; j <= c.ny; j++)
-                    Cube("Post", new Vector3(post, H, post), new Vector3(i * c.cellX, H / 2, j * c.cellY), M.alu, g);
+                    Cube("Post", new Vector3(post, Hp, post), new Vector3(i * c.cellX, Hp / 2, j * c.cellY), M.alu, g);
             for (int j = 0; j <= c.ny; j++)
                 foreach (int s in new[] { -1, 1 })
                     Cube("RailX", new Vector3(W + post, rh, 0.022f), new Vector3(W / 2, H - rh / 2, j * c.cellY + s * 0.014f), M.rail, g);
             for (int i = 0; i <= c.nx; i++)
                 foreach (int s in new[] { -1, 1 })
-                    Cube("RailZ", new Vector3(0.022f, rh * 0.8f, D + post), new Vector3(i * c.cellX + s * 0.014f, H - rh * 0.4f, D / 2), M.rail, g);
+                    Cube("RailZ", new Vector3(0.022f, rh * 0.8f, D + post), new Vector3(i * c.cellX + s * 0.014f, H - dz - rh * 0.4f, D / 2), M.rail, g);
             foreach (int px in c.ports)
             {
                 float x0 = px * c.cellX;
                 for (int sx = 0; sx <= 1; sx++)
                 {
-                    Cube("PortRail", new Vector3(0.044f, rh * 0.8f, c.cellY), new Vector3(x0 + sx * c.cellX, H - rh * 0.4f, -c.cellY / 2), M.rail, g);
-                    Cube("PortPost", new Vector3(post, H, post), new Vector3(x0 + sx * c.cellX, H / 2, -c.cellY), M.alu, g);
+                    Cube("PortRail", new Vector3(0.044f, rh * 0.8f, c.cellY), new Vector3(x0 + sx * c.cellX, H - dz - rh * 0.4f, -c.cellY / 2), M.rail, g);
+                    Cube("PortPost", new Vector3(post, Hp, post), new Vector3(x0 + sx * c.cellX, Hp / 2, -c.cellY), M.alu, g);
                 }
                 Cube("PortRail", new Vector3(c.cellX, rh, 0.044f), new Vector3(x0 + c.cellX / 2, H - rh / 2, -c.cellY), M.rail, g);
             }
@@ -309,8 +327,8 @@ namespace AutoStore
             {
                 Cube("Brace", new Vector3(W, 0.05f, 0.02f), new Vector3(W / 2, z, -0.01f), M.alu, g);
                 Cube("Brace", new Vector3(W, 0.05f, 0.02f), new Vector3(W / 2, z, D + 0.01f), M.alu, g);
-                Cube("Brace", new Vector3(0.02f, 0.05f, D), new Vector3(-0.01f, z, D / 2), M.alu, g);
-                Cube("Brace", new Vector3(0.02f, 0.05f, D), new Vector3(W + 0.01f, z, D / 2), M.alu, g);
+                Cube("Brace", new Vector3(0.02f, 0.046f, D), new Vector3(-0.01f, z, D / 2), M.alu, g);
+                Cube("Brace", new Vector3(0.02f, 0.046f, D), new Vector3(W + 0.01f, z, D / 2), M.alu, g);
             }
             foreach (float z in new[] { H + 0.55f, H + 1.05f })
             {
@@ -390,10 +408,34 @@ namespace AutoStore
                     gp.name = "Gripper";
                 }
                 go.name = "Robot_" + r.id; go.transform.SetParent(parent, true);
+                AddNumberPlate(go, r.id + 1);
                 Transform grip = null;
                 foreach (var t in go.GetComponentsInChildren<Transform>()) if (t.name.StartsWith("Gripper")) { grip = t; break; }
                 robotT.Add(go.transform); gripT.Add(grip); gripRest.Add(grip ? grip.localPosition : Vector3.zero);
             }
+        }
+
+        // 로봇 상판 번호: 상판(통풍 홈 포함) 바로 위 3 mm 에 흰 번호 데칼. 앞(포트 쪽, -Z)에서 바르게 읽힘
+        void AddNumberPlate(GameObject robot, int number)
+        {
+            Bounds? body = null;
+            foreach (var rr in robot.GetComponentsInChildren<Renderer>())
+            {
+                if (rr.name.Contains("Antenna") || rr.name.StartsWith("Gripper")) continue;
+                if (body == null) body = rr.bounds; else { var bb = body.Value; bb.Encapsulate(rr.bounds); body = bb; }
+            }
+            if (body == null) return;
+            var b = body.Value;
+            var q = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            q.name = "Number_" + number; Destroy(q.GetComponent<Collider>());
+            q.transform.SetParent(robot.transform, true);
+            q.transform.position = new Vector3(b.center.x, b.max.y + 0.003f, b.center.z - 0.02f);
+            q.transform.rotation = Quaternion.Euler(90, 0, 0);
+            q.transform.localScale = Vector3.one;
+            var ls = q.transform.lossyScale;   // 부모 스케일 보정 후 실제 크기 0.36 x 0.18 m
+            q.transform.localScale = new Vector3(0.36f / Mathf.Max(1e-4f, ls.x), 0.18f / Mathf.Max(1e-4f, ls.y), 1f / Mathf.Max(1e-4f, ls.z));
+            var mr = q.GetComponent<MeshRenderer>(); mr.sharedMaterial = M.Number(number);
+            mr.shadowCastingMode = ShadowCastingMode.Off;
         }
 
         // ------------------------------------------------------------------ 카메라 + 후처리
@@ -402,7 +444,7 @@ namespace AutoStore
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.05f, 0.05f, 0.06f);
-            Cam.nearClipPlane = 0.05f; Cam.farClipPlane = 200f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.1f, 90f);   // near 0.05 → 0.1: 원거리 깊이 정밀도 2배 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -428,7 +470,20 @@ namespace AutoStore
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.12f);
             var wb = prof.Add<WhiteBalance>(true); wb.temperature.Override(-4f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            // 모던 자막 (설비명 타이틀 + 샷 설명)
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "Cube Storage AS/RS",
+                name = "AutoStore",
+                korean = "큐브 스토리지 자동창고",
+                spec = $"그리드 {config.nx}×{config.ny}  ·  최대 {config.nz}단  ·  로봇 {config.robots}대  ·  포트 {config.ports.Length}개",
+                accent = new Color(1f, 0.32f, 0.26f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

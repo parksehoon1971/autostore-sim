@@ -251,16 +251,19 @@ namespace HaiPick
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -402,8 +405,9 @@ namespace HaiPick
                 int x0 = c.stationX0[si], n = c.stationN[si];
                 float xa = x0 * cX, xb = (x0 + n) * cX, xp = (x0 + 0.5f) * cX;
                 B(b, xb - xa, Dp, 0.004f, (xa + xb) / 2, -Dp / 2, 0.002f, M.mat);
-                for (int k = 0; k <= n; k++) B(b, 0.03f, Dp, 0.005f, xa + k * cX, -Dp / 2, 0.0025f, M.yellow);
-                B(b, xb - xa, 0.03f, 0.005f, (xa + xb) / 2, -Dp, 0.0025f, M.yellow);
+                // 노란 칸 표시: 매트(4 mm)와 윗면 차이가 1 mm 뿐이라 깜빡였음 → 8 mm
+                for (int k = 0; k <= n; k++) B(b, 0.03f, Dp, 0.008f, xa + k * cX, -Dp / 2, 0.004f, M.yellow);
+                B(b, xb - xa, 0.03f, 0.008f, (xa + xb) / 2, -Dp, 0.004f, M.yellow);
                 float yr = -Dp / 2 - (rw / 2 + RailOff) + 0.012f;
                 for (int sx = -1; sx <= 1; sx += 2)
                 {
@@ -457,6 +461,7 @@ namespace HaiPick
                     var go = Instantiate(prefab, root, false);
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                     FitLongAxisZ(go, W);
                     foreach (var t in go.GetComponentsInChildren<Transform>())
                     {
@@ -528,7 +533,7 @@ namespace HaiPick
                 {
                     go = new GameObject("ToteTpl_" + v); go.transform.SetParent(holder, false);
                     var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
-                    M.Remap(m); FitLongAxisZ(m, (float)config.toteD + 0.012f);
+                    M.Remap(m); FitLongAxisZ(m, (float)config.toteD + 0.012f); EquipFX.MeshFix.ResolveModel(m);
                 }
                 else go = FallbackTote(v, holder);
                 tpl.Add(go);
@@ -574,7 +579,7 @@ namespace HaiPick
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.75f, 0.77f, 0.8f);
-            Cam.nearClipPlane = 0.02f; Cam.farClipPlane = 200f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.06f, 120f);   // near 0.02 → 0.06: 원거리 깊이 정밀도 향상 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -600,7 +605,20 @@ namespace HaiPick
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.08f);
             var wb = prof.Add<WhiteBalance>(true); wb.temperature.Override(-3f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            // 모던 자막 (설비명 타이틀 + 샷 설명)
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "Autonomous Case-handling Robot",
+                name = "HaiPick Climb",
+                korean = "랙 등반형 토트 피킹 로봇",
+                spec = $"로봇 {config.robots}대  ·  {config.levels}단 랙 (약 {config.rackBase + config.levels * config.levelH:0.0} m)  ·  작업대 {config.stationX0.Length}곳",
+                accent = new Color(0.35f, 0.70f, 1f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

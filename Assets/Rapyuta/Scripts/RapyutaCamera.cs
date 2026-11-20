@@ -1,110 +1,70 @@
-// 30초 시네마틱 카메라 (blender/rapyuta_blender.py CAM_KEYS 와 같은 동선) + 수동 오비트 카메라
+// 30초 시네마틱 카메라: 컷 기반 샷 구성 (로봇 동작 강조) + 수동 오비트 카메라
+// 기본 설정(seed 3, warmup 600 s)에서 시뮬레이션을 돌려 확인한 로봇 10 의 동작에 맞췄습니다:
+//  11~12.7 s 왼쪽 리프트(셀 -1, 3)로 진입 → 12.7~15.2 s 리프트를 타고 2층 → 4층 (z 0.8 → 2.6 m)
+//  15.3~25.6 s 4층 통로를 따라 오른쪽으로 주행 → 25.6~26.5 s (9.4, 1.2) 에서 빈을 들어 올림
+// 경로 키는 blender/rapyuta_blender.py CAM_KEYS 를 바탕으로 하되, 바라보는 점을 로봇 10 에 고정해 동작이 화면 가운데 오게 했습니다.
 using UnityEngine;
-using UnityEngine.Rendering.Universal;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
+using EquipFX;
 
 namespace Rapyuta
 {
-    public class RapyutaCamera : MonoBehaviour
+    public class RapyutaCamera : CinematicRig
     {
         public RapyutaView view;
-        public Transform target;
-        public float duration = 30f;
-        public bool loop = true;
-        [HideInInspector] public DepthOfField dof;
+        public int heroRobot = 10;
 
-        float t0 = -1;
-        float yaw = 35, pitch = 30, dist = 15;
-        Vector3 orbitCenter;
+        protected override bool Ready => view != null && view.Sim != null;
+        protected override bool Cinematic => view.cinematicCamera;
 
-        struct Key { public float f; public Vector3 pos, look; public float lens; }
-        Key[] keys;
+        Robot Rb(int i) { var L = view.Sim.robots; return L[((i % L.Count) + L.Count) % L.Count]; }
+        Vector3 Hero(float up = 0.06f) { var r = Rb(heroRobot); return V(r.px, r.py, r.pz + up); }
 
-        // 시뮬레이션 좌표 (x, y, z-up) → Unity
-        static Key K(float f, float x, float y, float z, float lx, float ly, float lz, float lens) =>
-            new Key { f = f, pos = new Vector3(x, z, y), look = new Vector3(lx, lz, ly), lens = lens };
-
-        void BuildKeys()
+        protected override void BuildShots(ShotSequencer seq)
         {
-            // blender/rapyuta_blender.py 의 CAM_KEYS 와 같은 값 (기본 설정, seed 3, warmup 600 s 기준)
-            keys = new[]
+            // 1) 전경 (타이틀 카드)
+            seq.Add(Path(0f, 4.2f)
+                .Add(0, V(14.5f, -7.0f, 6.2f), V(5.6f, 3.0f, 1.8f), 24)
+                .Add(1, V(10.6f, -5.2f, 3.6f), V(5.2f, 0.8f, 1.3f), 26));
+
+            // 2) 피킹 스테이션 근접
+            seq.Add(Path(4.2f, 10.8f, "피킹 스테이션", "로봇이 빈을 작업자 앞 스테이션까지 가져오고, 프로젝터가 꺼낼 칸을 비춥니다")
+                .Add(0, V(8.8f, -4.4f, 2.6f), V(5.0f, -0.2f, 1.1f), 28)
+                .Add(1, V(4.6f, -3.4f, 2.2f), V(3.4f, -0.3f, 1.05f), 34));
+
+            // 3) 리프트: 바깥 열린 면에서 로봇과 같은 높이로 함께 올라감
+            seq.Add(new FollowShot
             {
-                K(0.000f, 14.5f, -7.0f, 6.2f, 5.6f, 3.0f, 1.8f, 24),      // 전경: 앞 오른쪽 높이
-                K(0.133f, 8.8f, -4.4f, 2.6f, 5.0f, -0.2f, 1.1f, 28),      // 피킹 스테이션 쪽으로
-                K(0.267f, 4.6f, -3.4f, 2.2f, 3.6f, -0.3f, 1.1f, 32),      // 스테이션 근접
-                K(0.367f, -3.4f, 0.6f, 1.3f, -0.35f, 3.25f, 1.0f, 28),    // 왼쪽 리프트
-                K(0.450f, -3.6f, 1.3f, 2.0f, -0.35f, 3.25f, 1.7f, 28),    // 리프트와 함께 상승
-                K(0.517f, -3.0f, 2.3f, 3.2f, -0.2f, 3.25f, 2.8f, 28),
-                K(0.567f, -0.9f, 3.25f, 2.95f, 1.2f, 3.25f, 2.80f, 24),   // 리프트 바깥 면으로 4층 통로 진입
-                K(0.633f, 1.2f, 3.25f, 2.92f, 3.5f, 3.25f, 2.78f, 24),    // 층 사이 통로
-                K(0.700f, 5.0f, 3.25f, 2.92f, 7.8f, 3.25f, 2.78f, 24),
-                K(0.767f, 7.8f, 3.25f, 2.95f, 11.0f, 3.1f, 2.8f, 24),
-                K(0.800f, 11.4f, 3.25f, 2.98f, 11.8f, 2.0f, 2.85f, 24),   // 오른쪽 리프트 사이로 빠져나옴
-                K(0.850f, 13.2f, 1.9f, 3.05f, 10.2f, 1.35f, 2.8f, 30),    // 앞쪽 빈을 들어 옮기는 장면
-                K(0.900f, 13.0f, 1.0f, 3.1f, 10.3f, 1.4f, 2.85f, 32),
-                K(1.000f, 16.5f, -4.0f, 6.0f, 6.5f, 3.0f, 2.2f, 24),      // 빠지며 전경
-            };
+                start = 10.8f, end = 15.6f, target = () => Hero(0.1f),
+                offset0 = new Vector3(-3.0f, 0.55f, -2.5f), offset1 = new Vector3(-2.7f, 0.65f, -1.2f),
+                lookOffset = Vector3.zero, lens0 = 30, lens1 = 34, smooth = 0.3f,
+                constrain = p => new Vector3(Mathf.Min(p.x, -1.6f), Mathf.Max(p.y, 0.5f), p.z),
+                title = "층간 리프트", detail = "로봇이 리프트를 타고 다른 층으로 올라갑니다",
+            });
+
+            // 4) 4층 통로 안: 층 사이 낮은 공간을 로봇 뒤에서 따라감 (경로는 기둥을 피하도록 고정, 시선은 로봇)
+            seq.Add(new PathShot { start = 15.6f, end = 24.4f, lookTarget = () => Hero(), lookLock = 0.55f,
+                    title = "층 내부 주행", detail = "높이 80 mm 로봇이 빈 밑 통로를 따라 목적지 칸까지 달립니다" }
+                .Add(0, V(-3.0f, 2.3f, 3.2f), V(-0.2f, 3.25f, 2.8f), 28)
+                .Add(0.11f, V(-0.9f, 3.25f, 2.95f), V(1.2f, 3.25f, 2.80f), 24)
+                .Add(0.34f, V(1.2f, 3.25f, 2.92f), V(3.5f, 3.25f, 2.78f), 24)
+                .Add(0.57f, V(5.0f, 3.25f, 2.92f), V(7.8f, 3.25f, 2.78f), 24)
+                .Add(0.80f, V(7.8f, 3.25f, 2.95f), V(11.0f, 3.1f, 2.8f), 24)
+                .Add(1f, V(11.4f, 3.25f, 2.98f), V(11.8f, 2.0f, 2.85f), 24));
+
+            // 5) 빈을 들어 올리는 순간: 오른쪽 바깥에서 근접
+            seq.Add(new PathShot { start = 24.4f, end = 28.0f, lookTarget = () => Hero(0.2f), lookLock = 0.6f,
+                    title = "빈 인출", detail = "빈 아래로 들어간 로봇이 상판을 들어 빈을 싣고 출발합니다" }
+                .Add(0, V(13.2f, 1.9f, 3.05f), V(10.2f, 1.35f, 2.8f), 32)
+                .Add(1, V(13.0f, 1.0f, 3.1f), V(10.3f, 1.4f, 2.85f), 36));
+
+            // 6) 빠지며 전경
+            seq.Add(Path(28.0f, 30f)
+                .Add(0, V(14.2f, -1.2f, 4.2f), V(7.5f, 2.5f, 2.3f), 28)
+                .Add(1, V(16.5f, -4.0f, 6.0f), V(6.5f, 3.0f, 2.2f), 24));
+
             var c = view.config;
             orbitCenter = new Vector3(c.nx * (float)c.cellX / 2, (float)(c.baseZ + c.nf * c.floorH) * 0.5f, c.ny * (float)c.cellY / 2);
-        }
-
-        public void Restart() { t0 = Time.time; }
-
-        static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
-        {
-            float t2 = t * t, t3 = t2 * t;
-            return 0.5f * (2f * p1 + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
-        }
-
-        // 축마다 두 키 사이로 제한 (곡선이 키 밖으로 튀어 빈·기둥에 닿지 않게. Blender 의 auto-clamped 보간과 비슷)
-        static Vector3 Clamp(Vector3 v, Vector3 a, Vector3 b) =>
-            new Vector3(Mathf.Clamp(v.x, Mathf.Min(a.x, b.x), Mathf.Max(a.x, b.x)),
-                        Mathf.Clamp(v.y, Mathf.Min(a.y, b.y), Mathf.Max(a.y, b.y)),
-                        Mathf.Clamp(v.z, Mathf.Min(a.z, b.z), Mathf.Max(a.z, b.z)));
-
-        void LateUpdate()
-        {
-            if (view == null || view.Sim == null) return;
-            if (keys == null) BuildKeys();
-            var cam = GetComponent<Camera>();
-            if (view.cinematicCamera)
-            {
-                if (t0 < 0) t0 = Time.time;
-                float u = (Time.time - t0) / duration;
-                u = loop ? Mathf.Repeat(u, 1f) : Mathf.Clamp01(u);
-                int i = 0; while (i < keys.Length - 2 && u > keys[i + 1].f) i++;
-                var k0 = keys[Mathf.Max(0, i - 1)]; var k1 = keys[i]; var k2 = keys[i + 1]; var k3 = keys[Mathf.Min(keys.Length - 1, i + 2)];
-                // 구간 사이 속도가 이어지도록 선형 파라미터 + 처음/끝만 부드럽게
-                float s = Mathf.InverseLerp(k1.f, k2.f, u);
-                if (i == 0) s = Mathf.SmoothStep(0, 1, s * 0.5f) * 2f;
-                transform.position = Clamp(CatmullRom(k0.pos, k1.pos, k2.pos, k3.pos, s), k1.pos, k2.pos);
-                var look = Clamp(CatmullRom(k0.look, k1.look, k2.look, k3.look, s), k1.look, k2.look);
-                transform.rotation = Quaternion.LookRotation(look - transform.position, Vector3.up);
-                cam.focalLength = Mathf.Lerp(k1.lens, k2.lens, Mathf.SmoothStep(0, 1, s));
-                if (target) target.position = look;
-            }
-            else Orbit();
-            if (dof != null && target) dof.focusDistance.value = Vector3.Distance(transform.position, target.position);
-        }
-
-        void Orbit()
-        {
-            Vector2 delta = Vector2.zero; float scroll = 0; bool drag = false;
-#if ENABLE_INPUT_SYSTEM
-            var m = Mouse.current;
-            if (m != null) { drag = m.rightButton.isPressed || m.leftButton.isPressed; delta = m.delta.ReadValue() * 0.2f; scroll = m.scroll.ReadValue().y * 0.01f; }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            drag = Input.GetMouseButton(0) || Input.GetMouseButton(1);
-            delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 3f; scroll = Input.mouseScrollDelta.y * 0.5f;
-#endif
-            if (drag) { yaw += delta.x; pitch = Mathf.Clamp(pitch - delta.y, 2, 85); }
-            dist = Mathf.Clamp(dist - scroll, 2, 45);
-            var rot = Quaternion.Euler(pitch, yaw, 0);
-            transform.position = orbitCenter + rot * new Vector3(0, 0, -dist);
-            transform.rotation = rot;
-            if (target) target.position = orbitCenter;
+            yaw = 35; pitch = 30; dist = 15;
         }
     }
 }
