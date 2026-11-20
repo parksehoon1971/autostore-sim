@@ -34,6 +34,7 @@ namespace EquipFX
         public int cargo = (int)CargoKind.Pallet;   // 이 물류센터가 다루는 화물
         public SiteDef site;                         // 물류센터 건물 · 출입문
         public List<MoverSave> movers = new List<MoverSave>();   // 하역 수단
+        public bool moversGiven;                     // 기본 하역 수단(지게차 1 · 작업자 1)을 이미 줌
     }
 
     // 배치된 설비 하나 (모듈 루트)
@@ -270,6 +271,7 @@ namespace EquipFX
 
             // 물류센터 영역 그리기 (그리는 동안 트럭은 멈춤)
             if (DrawingSite) { SiteDrawing(inp, ray, overUi); EndFrame(); return; }
+            if (!moversGiven && Site.drawn) GiveDefaultMovers();
             Traffic.Tick(Time.deltaTime, Site, Cargo);
 
             // 라이브러리에서 하역 수단을 끌어 오는 중
@@ -610,6 +612,7 @@ namespace EquipFX
         {
             if (!InsideBuilding(new Vector3(p.x, 0, p.y))) return false;
             if (p.x < Site.x + 1.5f || p.y < Site.z + 1.5f || p.x > Site.x + Site.w - 1.5f || p.y > Site.z + Site.d - 1.5f) return false;
+            if (Plan.HitsStage(Site, p - new Vector2(0.8f, 0.8f), new Vector2(1.6f, 1.6f), 0f)) return false;   // 대기 구역 · 평치 위는 안 됨
             foreach (var m in modules)
             {
                 if (m == null) continue;
@@ -619,16 +622,33 @@ namespace EquipFX
             return true;
         }
 
-        public Mover AddMover(int kind, Vector2 p)
+        public Mover AddMover(int kind, Vector2 p) => AddMover(kind, p, true);
+
+        Mover AddMover(int kind, Vector2 p, bool select)
         {
             var mv = Traffic.AddMover(kind, new Vector3(p.x, FloorY, p.y));
-            SelectMover(mv);
+            if (select) SelectMover(mv);
             Save();
             return mv;
         }
 
+        // 센터를 처음 정하면 지게차 1대와 작업자 1명을 기본으로 줌
+        bool moversGiven;
+        void GiveDefaultMovers()
+        {
+            moversGiven = true;
+            if (Traffic.movers.Count == 0)
+            {
+                AddMoverNearDock(MoverInfo.Forklift, false);
+                AddMoverNearDock(MoverInfo.Worker, false);
+            }
+            Save();
+        }
+
         // 눌러서 추가: 해당 화물을 다루는 문 안쪽 대기 구역 옆 빈자리
-        void AddMoverNearDock(int kind)
+        void AddMoverNearDock(int kind) => AddMoverNearDock(kind, true);
+
+        void AddMoverNearDock(int kind, bool select)
         {
             foreach (var d in Site.doors)
             {
@@ -639,11 +659,11 @@ namespace EquipFX
                     var q = c + new Vector2((k % 4 - 1.5f) * 2f, (k / 4) * 2.5f) * (d.side < 2 ? 1 : -1);
                     bool taken = false;
                     foreach (var o in Traffic.movers) if ((new Vector2(o.t.position.x, o.t.position.z) - q).sqrMagnitude < 2.5f) taken = true;
-                    if (!taken && MoverSpotOk(q)) { AddMover(kind, q); return; }
+                    if (!taken && MoverSpotOk(q)) { AddMover(kind, q, select); return; }
                 }
             }
             var cc = new Vector2(Site.x + Site.w / 2, Site.z + Site.d / 2);
-            if (MoverSpotOk(cc)) AddMover(kind, cc);
+            if (MoverSpotOk(cc)) AddMover(kind, cc, select);
         }
 
         public void RemoveMover(Mover m)
@@ -1017,6 +1037,7 @@ namespace EquipFX
             s.cargo = (int)Cargo;
             s.site = Site;
             foreach (var mv in Traffic.movers) s.movers.Add(new MoverSave { kind = mv.kind, x = mv.t.position.x, z = mv.t.position.z });
+            s.moversGiven = moversGiven;
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(s));
             PlayerPrefs.Save();
         }
@@ -1034,6 +1055,7 @@ namespace EquipFX
             if (s.site != null && s.site.w >= Plan.MinSize && s.site.d >= Plan.MinSize) { Site = s.site; if (Site.doors == null) Site.doors = new List<DoorDef>(); if (Site.doors.Count == 0) Plan.DefaultDoors(Site); }
             for (int i = 0; i < s.sizeIds.Count && i < s.sizes.Count; i++) sizeCache[s.sizeIds[i]] = s.sizes[i];
             if (s.movers != null) foreach (var mv in s.movers) Traffic.AddMover(mv.kind, new Vector3(mv.x, FloorY, mv.z));
+            moversGiven = s.moversGiven || (s.movers != null && s.movers.Count > 0);
             foreach (var it in s.items)
             {
                 var e = EquipCatalog.All.Find(x => x.id == it.id);

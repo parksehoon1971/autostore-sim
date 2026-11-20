@@ -88,14 +88,99 @@ namespace EquipFX
             min.x >= s.x + Wall + Margin && min.y >= s.z + Wall + Margin &&
             min.x + size.x <= s.x + s.w - Wall - Margin && min.y + size.y <= s.z + s.d - Wall - Margin;
 
+        // 도크 대기 구역 · 평치 구역(과 그 앞 통로)과 겹치는지 (설비 · 하역 수단 놓기 금지)
         public static bool HitsStage(SiteDef s, Vector2 min, Vector2 size, float gap)
         {
-            foreach (var d in s.doors)
+            bool Hit(Rect r) => min.x < r.xMax + gap && r.xMin < min.x + size.x + gap && min.y < r.yMax + gap && r.yMin < min.y + size.y + gap;
+            foreach (var d in s.doors) if (Hit(StageRect(s, d))) return true;
+            return s.doors.Count > 0 && Hit(BulkRect(s));
+        }
+
+        // ------------------------------------------------------------------ 센터 안 화물 자리
+        public const float CrossAisle = 4f;     // 대기 구역과 평치 사이 통로 폭
+        public const float BulkDepth = 14f;     // 평치 구역 깊이
+        public const float BulkAisle = 5.2f;    // 평치 통로 하나(양쪽 화물 줄 포함) 폭
+        public const float SlotRow = 1.5f;      // 화물 줄 간격 (통로 방향)
+        public const float SlotSide = 1.9f;     // 통로 가운데에서 화물 가운데까지
+
+        // 벽 기준 좌표: point = origin + along * a + inward * d (a 는 DoorDef.pos 와 같은 방향)
+        public static void WallFrame(SiteDef s, int side, out Vector2 origin, out Vector2 along, out Vector2 inward)
+        {
+            switch (side)
             {
-                var r = StageRect(s, d);
-                if (min.x < r.xMax + gap && r.xMin < min.x + size.x + gap && min.y < r.yMax + gap && r.yMin < min.y + size.y + gap) return true;
+                case 0: origin = new Vector2(s.x, s.z); along = Vector2.up; inward = Vector2.right; break;
+                case 1: origin = new Vector2(s.x + s.w, s.z); along = Vector2.up; inward = Vector2.left; break;
+                case 2: origin = new Vector2(s.x, s.z); along = Vector2.right; inward = Vector2.up; break;
+                default: origin = new Vector2(s.x, s.z + s.d); along = Vector2.right; inward = Vector2.down; break;
             }
-            return false;
+        }
+
+        static float NearBulk => Wall + 0.2f + StageDepth + CrossAisle;          // 벽에서 평치 시작까지
+        public static float CrossDepth => Wall + 0.2f + StageDepth + CrossAisle / 2;   // 통로 가운데 (벽에서)
+
+        static void BulkSpan(SiteDef s, out int side, out float a0, out float a1, out float depth)
+        {
+            side = DockSide(s);
+            float wl = WallLen(s, side);
+            float len = Mathf.Max(BulkAisle, Mathf.Min(wl - 8f, 42f));
+            len = Mathf.Floor(len / BulkAisle) * BulkAisle;
+            a0 = wl / 2 - len / 2; a1 = a0 + len;
+            float avail = (side < 2 ? s.w : s.d) - NearBulk - 4f;
+            depth = Mathf.Clamp(avail, 4f, BulkDepth);
+        }
+
+        public static Rect BulkRect(SiteDef s)
+        {
+            BulkSpan(s, out int side, out float a0, out float a1, out float depth);
+            WallFrame(s, side, out var o, out var al, out var iw);
+            var p = o + al * a0 + iw * NearBulk; var q = o + al * a1 + iw * (NearBulk + depth);
+            return Rect.MinMaxRect(Mathf.Min(p.x, q.x), Mathf.Min(p.y, q.y), Mathf.Max(p.x, q.x), Mathf.Max(p.y, q.y));
+        }
+
+        public struct SlotGeo { public Vector2 pos, aisle, face; }
+
+        // kind 0 입고 대기(검수) 1 평치 통로 2 출고장. 통로로 들어가 옆(face 방향)의 화물 자리를 씀
+        public class ZoneGeo
+        {
+            public int kind, door = -1;
+            public Vector2 entryA, entryB;          // A: 문(또는 통로 앞) 쪽, B: 안쪽(평치 쪽 통로)
+            public Vector2 axis;
+            public readonly List<SlotGeo> slots = new List<SlotGeo>();
+        }
+
+        static void AddRows(ZoneGeo z, Vector2 start, Vector2 axis, Vector2 tg, float from, float to)
+        {
+            for (float d = from; d <= to + 0.01f; d += SlotRow)
+                for (int k = -1; k <= 1; k += 2)
+                {
+                    var a = start + axis * d;
+                    z.slots.Add(new SlotGeo { aisle = a, face = tg * k, pos = a + tg * (k * SlotSide) });
+                }
+        }
+
+        public static List<ZoneGeo> Zones(SiteDef s)
+        {
+            var list = new List<ZoneGeo>();
+            for (int i = 0; i < s.doors.Count; i++)
+            {
+                var d = s.doors[i];
+                var n = -Outward(d.side); var tg = new Vector2(-n.y, n.x);
+                var p = DoorInside(s, d);
+                var z = new ZoneGeo { kind = d.kind == 0 ? 0 : 2, door = i, axis = n, entryA = p, entryB = p + n * (StageDepth + 1.2f) };
+                AddRows(z, p, n, tg, 1.4f, StageDepth - 1.4f);
+                list.Add(z);
+            }
+            if (s.doors.Count == 0) return list;
+            BulkSpan(s, out int side, out float a0, out float a1, out float depth);
+            WallFrame(s, side, out var o, out var al, out var iw);
+            for (float a = a0 + BulkAisle / 2; a < a1; a += BulkAisle)
+            {
+                var start = o + al * a + iw * NearBulk;
+                var z = new ZoneGeo { kind = 1, axis = iw, entryA = start - iw * 1.0f, entryB = start - iw * 1.0f };
+                AddRows(z, start, iw, al, 1.0f, depth - 0.9f);
+                list.Add(z);
+            }
+            return list;
         }
 
         // 건물 가운데에서 본 방향으로 어느 벽이 그 점을 마주하는지
@@ -301,7 +386,8 @@ namespace EquipFX
         readonly Transform root, cargoRoot;
         readonly GameObject slab;
         readonly Material slabMat, edgeMat;
-        readonly FlatMesh walls, axes, dockIn, dockOut, ground, selMesh, flowIn, flowOut, asphalt, paint, yellow;
+        readonly FlatMesh walls, axes, dockIn, dockOut, ground, selMesh, flowIn, flowOut, asphalt, paint, yellow, bulkMesh;
+        public static readonly Color BulkCol = new Color(0.50f, 0.38f, 0.80f);
         float flowSig = float.NaN;
         string drawnSig, cargoSig;
         readonly Dictionary<string, Material> mats = new Dictionary<string, Material>();
@@ -331,6 +417,7 @@ namespace EquipFX
             dockIn = new FlatMesh("InDocks", root, InCol);
             dockOut = new FlatMesh("OutDocks", root, OutCol);
             selMesh = new FlatMesh("DoorSelection", root, HudStyle.Accent);
+            bulkMesh = new FlatMesh("BulkStorage", root, BulkCol);
             flowIn = new FlatMesh("FlowIn", root, Color.white, ArrowTexture(InCol));
             flowOut = new FlatMesh("FlowOut", root, Color.white, ArrowTexture(OutCol));
         }
@@ -415,6 +502,22 @@ namespace EquipFX
                 }
             }
             // 입·출고 지점 표시 (땅 위 원 대신 마름모)
+            // 화물 자리: 대기 구역 · 출고장은 문 색, 평치는 보라
+            bulkMesh.Clear();
+            if (s.doors.Count > 0) bulkMesh.Outline(Plan.BulkRect(s), 0.14f, yM);
+            foreach (var z in Plan.Zones(s))
+            {
+                var m = z.kind == 1 ? bulkMesh : z.kind == 0 ? dockIn : dockOut;
+                foreach (var sl in z.slots)
+                {
+                    bool fx = Mathf.Abs(sl.face.x) > 0.5f;
+                    float hx = fx ? 0.65f : 0.55f, hz = fx ? 0.55f : 0.65f;
+                    m.Outline(Rect.MinMaxRect(sl.pos.x - hx, sl.pos.y - hz, sl.pos.x + hx, sl.pos.y + hz), 0.05f, yM);
+                }
+                if (z.kind == 1 && z.slots.Count > 0)
+                    bulkMesh.Dashed(z.slots[0].aisle, z.slots[z.slots.Count - 1].aisle, 0.06f, yM, 0.8f, 0.6f);
+            }
+            bulkMesh.Apply();
             Diamond(dockIn, Plan.InPoint + new Vector2(1.5f, 0), 1.2f, yG + 0.01f);
             Diamond(dockOut, Plan.OutPoint + new Vector2(1.5f, 0), 1.2f, yG + 0.01f);
             dockIn.Apply(); dockOut.Apply(); selMesh.Apply();

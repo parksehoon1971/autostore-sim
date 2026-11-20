@@ -164,12 +164,14 @@ namespace EquipFX
     {
         public int kind, id;
         public Transform t, hold;
-        public Bay bay;               // 맡은 트럭 자리
-        public int step, slotIdx = -1;
-        public Vector3 target;
+        public Bay bay;               // 맡은 트럭 자리 (하차 · 상차 중)
+        public Bay pickFor;           // 평치에서 출고장으로 옮겨 주는 출고 트럭 자리
+        public int slotIdx = -1;      // 맡은 트럭 칸
         public Transform load;
-        public float wait;
         public string State = "대기";
+        public IEnumerator<object> job;                              // 지금 하는 일 (프레임마다 한 걸음)
+        public StoreZone holding;                                    // 들어가 있는 구역 (한 번에 한 대만)
+        public readonly List<StoreSlot> claims = new List<StoreSlot>();   // 잡아 둔 화물 자리
 
         public static Mover Create(Transform parent, int kind, Vector3 pos, int id)
         {
@@ -208,12 +210,13 @@ namespace EquipFX
             return m;
         }
 
-        public bool MoveTo(Vector3 p, float dt)
+        // rev: 뒤로 이동 (앞을 그대로 보며 물러남)
+        public bool MoveTo(Vector3 p, float dt, bool rev = false)
         {
             var d = p - t.position; float dist = d.magnitude;
-            float step = MoverInfo.Speed(kind) * dt;
+            float step = MoverInfo.Speed(kind) * (rev ? 0.6f : 1f) * dt;
             var flat = new Vector3(d.x, 0, d.z);
-            if (flat.sqrMagnitude > 0.0004f) t.rotation = Quaternion.RotateTowards(t.rotation, Quaternion.LookRotation(flat), 360f * dt);
+            if (flat.sqrMagnitude > 0.0004f) t.rotation = Quaternion.RotateTowards(t.rotation, Quaternion.LookRotation(rev ? -flat : flat), 360f * dt);
             if (step >= dist) { t.position = p; return true; }
             t.position += d / dist * step;
             return false;
@@ -239,8 +242,26 @@ namespace EquipFX
         public int units, done;       // 주문 물량, 처리한 수
         public float due;             // 마감 (교통 시계 s)
         public bool late, noticed;
-        public readonly List<Transform> stage = new List<Transform>();   // 입고 대기 구역에 내려놓은 화물
-        public int Assigned;          // 맡은 하역 수단 수
+        public int Assigned;          // 트럭에서 일하는 하역 수단 수 (한 자리에 한 대)
+        public int picking;           // 평치에서 출고장으로 옮기는 중인 수 (출고)
+    }
+
+    // ------------------------------------------------------------------ 센터 안 화물 자리 (입고 대기·검수 / 평치 / 출고장)
+    public class StoreSlot
+    {
+        public Vector2 pos, aisle, face;
+        public Transform unit;
+        public bool reserved, inspected;
+    }
+
+    public class StoreZone
+    {
+        public int kind, door = -1;       // kind 0 입고 대기(검수) 1 평치 통로 2 출고장
+        public Vector2 entryA, entryB, axis;
+        public readonly List<StoreSlot> slots = new List<StoreSlot>();
+        public Mover holder;
+        public int Units { get { int n = 0; foreach (var x in slots) if (x.unit != null) n++; return n; } }
+        public StoreSlot Free() { foreach (var x in slots) if (x.unit == null && !x.reserved) return x; return null; }
     }
 
     public class Traffic
@@ -262,15 +283,45 @@ namespace EquipFX
             root = new GameObject("Traffic").transform; root.SetParent(parent, false);
         }
 
-        // 건물·문·화물이 바뀌면 트럭과 대기 화물을 모두 치우고 새로 시작 (하역 수단은 그대로)
-        void Reset(SiteDef s)
+        public readonly List<StoreZone> zones = new List<StoreZone>();
+        public const int StartStock = 16;           // 처음 평치에 있는 재고
+        float dtNow, hNow;
+        SiteDef siteNow;
+        bool qcNoticed, stockNoticed;
+
+        // 건물·문·화물이 바뀌면 트럭과 화물을 모두 치우고 새로 시작 (하역 수단은 그대로). 평치에는 처음 재고를 둠
+        void Reset(SiteDef s, CargoKind cargo)
         {
-            foreach (var b in bays) { b.truck?.Destroy(); foreach (var u in b.stage) if (u != null) Object.Destroy(u.gameObject); }
+            foreach (var b in bays) b.truck?.Destroy();
             bays.Clear();
             foreach (var m in movers) Release(m);
+            foreach (var z in zones) foreach (var sl in z.slots) if (sl.unit != null) Object.Destroy(sl.unit.gameObject);
+            zones.Clear();
             for (int i = 0; i < s.doors.Count; i++)
                 bays.Add(new Bay { door = i, inbound = s.doors[i].kind == 0, timer = 3f + i * 4f + (float)rng.NextDouble() * 4f });
+            foreach (var g in Plan.Zones(s))
+            {
+                var z = new StoreZone { kind = g.kind, door = g.door, entryA = g.entryA, entryB = g.entryB, axis = g.axis };
+                foreach (var sg in g.slots) z.slots.Add(new StoreSlot { pos = sg.pos, aisle = sg.aisle, face = sg.face });
+                zones.Add(z);
+            }
+            int n = 0;
+            foreach (var z in zones)
+                if (z.kind == 1)
+                    foreach (var sl in z.slots)
+                    {
+                        if (n >= StartStock) break;
+                        var u = new GameObject("Cargo").transform; CargoModels.Build(u, cargo, n);
+                        Place(sl, u, s.h); sl.inspected = true; MarkInspected(u); n++;
+                    }
+            qcNoticed = stockNoticed = false;
         }
+
+        public int Stock { get { int n = 0; foreach (var z in zones) if (z.kind == 1) n += z.Units; return n; } }
+        public int StockSlots { get { int n = 0; foreach (var z in zones) if (z.kind == 1) n += z.slots.Count; return n; } }
+        public int AwaitingQc { get { int n = 0; foreach (var z in zones) if (z.kind == 0) foreach (var x in z.slots) if (x.unit != null && !x.inspected) n++; return n; } }
+        public int InboundStaged { get { int n = 0; foreach (var z in zones) if (z.kind == 0) n += z.Units; return n; } }
+        public int OutboundStaged { get { int n = 0; foreach (var z in zones) if (z.kind == 2) n += z.Units; return n; } }
 
         public Mover AddMover(int kind, Vector3 pos)
         {
@@ -287,26 +338,37 @@ namespace EquipFX
             Object.Destroy(m.t.gameObject);
         }
 
+        // 하던 일을 그만둠: 든 화물은 사라지고, 잡아 둔 자리와 구역을 놓음
         void Release(Mover m)
         {
+            m.job = null;
             if (m.load != null) { Object.Destroy(m.load.gameObject); m.load = null; }
             if (m.bay != null)
             {
                 m.bay.Assigned--;
                 if (m.slotIdx >= 0 && m.bay.truck != null) m.bay.truck.reserved[m.slotIdx] = false;
             }
-            m.bay = null; m.slotIdx = -1; m.step = 0; m.State = "대기";
+            if (m.pickFor != null) { m.pickFor.picking--; m.pickFor = null; }
+            foreach (var c in m.claims) c.reserved = false;
+            m.claims.Clear();
+            Leave(m);
+            m.bay = null; m.slotIdx = -1; m.State = "대기";
         }
 
         public void Tick(float dt, SiteDef s, CargoKind cargo)
         {
             string ns = (int)cargo + "|" + s.x + "," + s.z + "," + s.w + "," + s.d + "," + s.h + "|" + s.doors.Count;
             foreach (var d in s.doors) ns += ";" + d.kind + d.side + d.pos.ToString("0.0");
-            if (ns != sig) { sig = ns; Reset(s); }
+            if (ns != sig) { sig = ns; Reset(s, cargo); }
             if (dt <= 0) return;
-            clock += dt;
+            clock += dt; dtNow = dt; hNow = s.h; siteNow = s;
             foreach (var b in bays) TickBay(b, dt, s, cargo);
             foreach (var m in movers) TickMover(m, dt, s, cargo);
+            if (!qcNoticed && AwaitingQc > 0 && !AnyWorker())
+            {
+                qcNoticed = true;
+                Notice?.Invoke("입고 화물을 검수할 작업자가 없습니다. 라이브러리 '하역 수단'에서 작업자를 센터 안에 놓으세요.");
+            }
         }
 
         // ---------------------------------------------------------------- 트럭
@@ -371,6 +433,11 @@ namespace EquipFX
                             ? "트럭이 윙을 열고 기다립니다. 왼쪽 라이브러리 '하역 수단'에서 지게차를 센터 안에 놓으면 하역을 시작합니다."
                             : "트럭이 윙을 열고 기다립니다. 지게차나 작업자를 센터 안에 놓으면 하역을 시작합니다.");
                     }
+                    else if (!b.inbound && !stockNoticed && Stock == 0 && OutboundStaged == 0 && b.picking == 0)
+                    {
+                        stockNoticed = true;
+                        Notice?.Invoke("출고 지시가 나왔지만 평치 재고가 없습니다. 입고 화물을 검수해 평치에 적치해야 출고할 수 있습니다.");
+                    }
                     break;
                 case 4:
                     if (b.truck.SetWing(0f, dt))
@@ -393,94 +460,288 @@ namespace EquipFX
         }
 
         bool AnyMover(CargoKind c) { foreach (var m in movers) if (MoverInfo.Handles(m.kind, c)) return true; return false; }
+        bool AnyWorker() { foreach (var m in movers) if (m.kind == MoverInfo.Worker) return true; return false; }
 
-        // 하역 수단이 할 일이 남은 자리
-        bool NeedsWork(Bay b)
+        public const float InspectTime = 2.5f;     // 화물 하나 검수 (s)
+        public int inspected, stored;              // 검수한 수, 평치에 적치한 수
+
+        StoreZone StageOf(int door) { foreach (var z in zones) if (z.door == door) return z; return null; }
+
+        static int LoadedTruckSlot(Bay b)
         {
-            if (b.state != 3 || b.truck == null || b.Assigned >= 3) return false;
-            if (b.inbound) { for (int i = 0; i < b.truck.slot.Length; i++) if (b.truck.slot[i] != null && !b.truck.reserved[i]) return true; return false; }
-            int pending = 0; foreach (var r in b.truck.reserved) if (r) pending++;
-            return b.done + pending < b.units;
+            for (int i = 0; i < b.truck.slot.Length; i++) if (b.truck.slot[i] != null && !b.truck.reserved[i]) return i;   // 뒤쪽부터
+            return -1;
         }
 
-        // ---------------------------------------------------------------- 하역 수단
+        static int FreeTruckSlot(Bay b)
+        {
+            for (int i = b.truck.slot.Length - 1; i >= 0; i--) if (b.truck.slot[i] == null && !b.truck.reserved[i]) return i;   // 앞쪽부터
+            return -1;
+        }
+
+        static void Claim(Mover m, StoreSlot sl) { sl.reserved = true; m.claims.Add(sl); }
+        static void Unclaim(Mover m, StoreSlot sl) { sl.reserved = false; m.claims.Remove(sl); }
+
+        void ClaimTruck(Mover m, Bay b, int ti)
+        {
+            m.bay = b; b.Assigned++;
+            m.slotIdx = ti; b.truck.reserved[ti] = true;
+        }
+
+        // ---------------------------------------------------------------- 하역 수단: 할 일 고르기
         void TickMover(Mover m, float dt, SiteDef s, CargoKind cargo)
         {
-            float h = s.h;
-            if (m.wait > 0) { m.wait -= dt; return; }
-            if (m.bay == null)
+            if (m.job != null)
             {
-                if (!MoverInfo.Handles(m.kind, cargo)) { m.State = cargo == CargoKind.Pallet || cargo == CargoKind.Drum ? "파렛트는 지게차만" : "대기"; return; }
-                Bay best = null; float bd = float.MaxValue;
-                foreach (var b in bays)
-                {
-                    if (!NeedsWork(b)) continue;
-                    var p = Plan.DoorInside(s, s.doors[b.door]);
-                    float d = (new Vector2(m.t.position.x, m.t.position.z) - p).sqrMagnitude;
-                    if (d < bd) { bd = d; best = b; }
-                }
-                if (best == null) { m.State = "대기"; return; }
-                m.bay = best; best.Assigned++; m.step = 1;
+                if (!m.job.MoveNext()) m.job = null;
+                return;
             }
-            var bay = m.bay; var door = s.doors[bay.door];
-            var din = Plan.DoorInside(s, door); var dIn3 = new Vector3(din.x, h, din.y);
-            var stage = Plan.StageRect(s, door);
-            if (bay.truck == null || bay.state != 3) { FinishInbound(m, s); return; }
+            m.job = PickJob(m, s, cargo);
+            if (m.job == null)
+                m.State = m.kind == MoverInfo.Worker && !MoverInfo.Handles(m.kind, cargo) ? "대기 (검수할 화물 없음)" : "대기";
+        }
 
-            if (bay.inbound)
-            {
-                switch (m.step)
+        // 우선순위: 검수(작업자) → 상차 → 하차 → 출고 피킹(평치 → 출고장) → 적치(대기 구역 → 평치)
+        IEnumerator<object> PickJob(Mover m, SiteDef s, CargoKind cargo)
+        {
+            if (m.kind == MoverInfo.Worker)
+                foreach (var z in zones)
                 {
-                    case 1:   // 트럭 칸 고르기 (뒤쪽부터)
-                        m.slotIdx = -1;
-                        for (int i = 0; i < bay.truck.slot.Length; i++)
-                            if (bay.truck.slot[i] != null && !bay.truck.reserved[i]) { m.slotIdx = i; break; }
-                        if (m.slotIdx < 0) { Release(m); return; }
-                        bay.truck.reserved[m.slotIdx] = true;
-                        m.State = $"{Plan.DoorName(s, bay.door)} 하차"; m.step = 2;
-                        break;
-                    case 2: if (m.MoveTo(dIn3, dt)) m.step = 3; break;
-                    case 3: if (m.MoveTo(Approach(bay, m), dt)) { m.step = 4; m.wait = 1.2f; } break;
-                    case 4:
-                        var u = bay.truck.slot[m.slotIdx];
-                        bay.truck.slot[m.slotIdx] = null; bay.truck.reserved[m.slotIdx] = false; m.slotIdx = -1;
-                        if (u != null) m.Carry(u);
-                        m.step = 5;
-                        break;
-                    case 5: if (m.MoveTo(dIn3, dt)) m.step = 6; break;
-                    case 6: if (m.MoveTo(StageSpot(stage, bay.stage.Count, h, door), dt)) { m.step = 7; m.wait = 0.8f; } break;
-                    case 7: DropInStage(m, bay, s, door); m.step = 1; if (!NeedsWork(bay)) { Release(m); } break;
+                    if (z.kind != 0) continue;
+                    foreach (var sl in z.slots)
+                        if (sl.unit != null && !sl.inspected && !sl.reserved) { Claim(m, sl); return InspectJob(m, z, sl).GetEnumerator(); }
                 }
-            }
-            else
+            if (!MoverInfo.Handles(m.kind, cargo)) return null;
+
+            foreach (var b in bays)
             {
-                switch (m.step)
-                {
-                    case 1:   // 빈 칸 고르기 (앞쪽부터)
-                        m.slotIdx = -1;
-                        for (int i = bay.truck.slot.Length - 1; i >= 0; i--)
-                            if (bay.truck.slot[i] == null && !bay.truck.reserved[i]) { m.slotIdx = i; break; }
-                        if (m.slotIdx < 0) { Release(m); return; }
-                        bay.truck.reserved[m.slotIdx] = true;
-                        m.State = $"{Plan.DoorName(s, bay.door)} 상차"; m.step = 2;
-                        break;
-                    case 2: if (m.MoveTo(StageSpot(stage, 0, h, door), dt)) { m.step = 3; m.wait = 1.2f; } break;
-                    case 3:
-                        var u = new GameObject("Cargo").transform; CargoModels.Build(u, cargo, m.id);
-                        u.SetParent(root, false); m.Carry(u);
-                        m.step = 4;
-                        break;
-                    case 4: if (m.MoveTo(dIn3, dt)) m.step = 5; break;
-                    case 5: if (m.MoveTo(Approach(bay, m), dt)) { m.step = 6; m.wait = 0.8f; } break;
-                    case 6:
-                        if (m.load != null) { bay.truck.Put(m.slotIdx, m.load); m.load = null; }
-                        bay.truck.reserved[m.slotIdx] = false; m.slotIdx = -1;
-                        bay.done++; outDone++;
-                        m.step = 7;
-                        break;
-                    case 7: if (m.MoveTo(dIn3, dt)) { m.step = 1; if (!NeedsWork(bay)) Release(m); } break;
-                }
+                if (b.inbound || b.state != 3 || b.truck == null || b.Assigned > 0 || b.done >= b.units) continue;
+                var z = StageOf(b.door); if (z == null) continue;
+                var sl = z.slots.Find(x => x.unit != null && !x.reserved);
+                int ti = FreeTruckSlot(b);
+                if (sl == null || ti < 0) continue;
+                Claim(m, sl); ClaimTruck(m, b, ti);
+                return LoadJob(m, s, b, z, sl).GetEnumerator();
             }
+            foreach (var b in bays)
+            {
+                if (!b.inbound || b.state != 3 || b.truck == null || b.Assigned > 0) continue;
+                var z = StageOf(b.door); if (z == null) continue;
+                var sl = z.Free();
+                int ti = LoadedTruckSlot(b);
+                if (sl == null || ti < 0) continue;
+                Claim(m, sl); ClaimTruck(m, b, ti);
+                return UnloadJob(m, s, b, z, sl).GetEnumerator();
+            }
+            foreach (var b in bays)
+            {
+                if (b.inbound || b.state != 3) continue;
+                var z = StageOf(b.door); if (z == null) continue;
+                int need = b.units - b.done - z.Units - b.picking - b.Assigned;
+                if (need <= 0) continue;
+                var dst = z.Free(); if (dst == null) continue;
+                StoreZone fromZ = null; StoreSlot from = null;
+                foreach (var bz in zones)
+                {
+                    if (bz.kind != 1) continue;
+                    from = bz.slots.Find(x => x.unit != null && x.inspected && !x.reserved);
+                    if (from != null) { fromZ = bz; break; }
+                }
+                if (from == null) break;
+                Claim(m, from); Claim(m, dst);
+                b.picking++; m.pickFor = b;
+                return MoveJob(m, fromZ, from, z, dst).GetEnumerator();
+            }
+            foreach (var z in zones)
+            {
+                if (z.kind != 0) continue;
+                var sl = z.slots.Find(x => x.unit != null && x.inspected && !x.reserved);
+                if (sl == null) continue;
+                StoreZone toZ = null; StoreSlot to = null;
+                foreach (var bz in zones)
+                {
+                    if (bz.kind != 1) continue;
+                    to = bz.Free();
+                    if (to != null) { toZ = bz; break; }
+                }
+                if (to == null) return null;   // 평치가 가득 참
+                Claim(m, sl); Claim(m, to);
+                return MoveJob(m, z, sl, toZ, to).GetEnumerator();
+            }
+            return null;
+        }
+
+        // ---------------------------------------------------------------- 하역 수단: 움직임 조각
+        Vector3 V3(Vector2 p) => new Vector3(p.x, hNow, p.y);
+
+        IEnumerable<object> Go(Mover m, Vector2 p, bool rev = false)
+        {
+            var tgt = V3(p);
+            while (!m.MoveTo(tgt, dtNow, rev)) yield return null;
+        }
+
+        IEnumerable<object> Go3(Mover m, Vector3 p, bool rev = false)
+        {
+            while (!m.MoveTo(p, dtNow, rev)) yield return null;
+        }
+
+        IEnumerable<object> Wait(float sec)
+        {
+            for (float t0 = 0; t0 < sec; t0 += dtNow) yield return null;
+        }
+
+        // 대기 구역 · 평치 통로에는 한 대씩만 들어감 (화물 · 장비끼리 겹치지 않게)
+        IEnumerable<object> Enter(Mover m, StoreZone z)
+        {
+            string was = m.State;
+            while (z.holder != null && z.holder != m) { m.State = "통로가 비기를 기다림"; yield return null; }
+            z.holder = m; m.holding = z; m.State = was;
+        }
+
+        void Leave(Mover m)
+        {
+            if (m.holding != null && m.holding.holder == m) m.holding.holder = null;
+            m.holding = null;
+        }
+
+        // 건물 안 이동: 대기 구역과 평치 사이 통로를 따라 (직각으로)
+        IEnumerable<object> Travel(Mover m, Vector2 to)
+        {
+            var from = new Vector2(m.t.position.x, m.t.position.z);
+            var pts = new List<Vector2>();
+            if (siteNow != null && siteNow.doors.Count > 0)
+            {
+                Plan.WallFrame(siteNow, Plan.DockSide(siteNow), out var o, out var al, out var iw);
+                float cd = Plan.CrossDepth;
+                float af = Vector2.Dot(from - o, al), df = Vector2.Dot(from - o, iw), at = Vector2.Dot(to - o, al);
+                if (Mathf.Abs(df - cd) > 0.3f) pts.Add(o + al * af + iw * cd);
+                if (Mathf.Abs(at - af) > 0.3f) pts.Add(o + al * at + iw * cd);
+            }
+            pts.Add(to);
+            foreach (var p in pts)
+                foreach (var st in Go(m, p)) yield return st;
+        }
+
+        // 화물 자리 앞: 통로에서 옆으로 돌아 포크(손) 끝이 자리 가운데에 오도록
+        static Vector2 Reach(Mover m, StoreSlot sl) => sl.pos - sl.face * (m.kind == MoverInfo.Forklift ? 1.5f : 0.45f);
+
+        IEnumerable<object> IntoSlot(Mover m, StoreSlot sl)
+        {
+            foreach (var st in Go(m, sl.aisle)) yield return st;
+            foreach (var st in Go(m, Reach(m, sl))) yield return st;
+        }
+
+        IEnumerable<object> OutOfSlot(Mover m, StoreSlot sl)
+        {
+            foreach (var st in Go(m, sl.aisle, true)) yield return st;
+        }
+
+        void Place(StoreSlot sl, Transform u, float h)
+        {
+            u.SetParent(root, false); u.localScale = Vector3.one;
+            u.position = new Vector3(sl.pos.x, h, sl.pos.y);
+            u.rotation = Quaternion.LookRotation(new Vector3(sl.face.x, 0, sl.face.y));
+            sl.unit = u;
+        }
+
+        static void MarkInspected(Transform u)
+        {
+            float top = 0.3f;
+            foreach (var r in u.GetComponentsInChildren<Renderer>()) top = Mathf.Max(top, r.bounds.max.y - u.position.y);
+            var g = Truck.Box(u, new Vector3(0, top + 0.03f, 0), new Vector3(0.45f, 0.06f, 0.45f), Truck.Mat("QcOk", new Color(0.15f, 0.75f, 0.35f), 0.4f));
+            g.name = "QC";
+        }
+
+        // ---------------------------------------------------------------- 하역 수단: 일
+        // 검수: 입고 대기 구역의 화물 옆에서 잠시 확인 → 초록 표시
+        IEnumerable<object> InspectJob(Mover m, StoreZone z, StoreSlot sl)
+        {
+            m.State = "검수하러 가는 중";
+            foreach (var st in Travel(m, z.entryB)) yield return st;
+            foreach (var st in Enter(m, z)) yield return st;
+            foreach (var st in IntoSlot(m, sl)) yield return st;
+            m.State = "검수 중";
+            foreach (var st in Wait(InspectTime)) yield return st;
+            if (sl.unit != null && !sl.inspected) { sl.inspected = true; MarkInspected(sl.unit); inspected++; }
+            Unclaim(m, sl);
+            foreach (var st in OutOfSlot(m, sl)) yield return st;
+            foreach (var st in Go(m, z.entryB)) yield return st;
+            Leave(m);
+        }
+
+        // 하차: 대기 구역 통로 → 문 → 트럭 칸 → (후진) 문 → 대기 구역 빈자리
+        IEnumerable<object> UnloadJob(Mover m, SiteDef s, Bay b, StoreZone z, StoreSlot sl)
+        {
+            m.State = $"{Plan.DoorName(s, b.door)} 하차";
+            foreach (var st in Travel(m, z.entryB)) yield return st;
+            foreach (var st in Enter(m, z)) yield return st;
+            foreach (var st in Go(m, z.entryA)) yield return st;
+            if (b.truck == null) { Release(m); yield break; }
+            foreach (var st in Go3(m, Approach(b, m))) yield return st;
+            foreach (var st in Wait(1.2f)) yield return st;
+            if (b.truck == null) { Release(m); yield break; }
+            var u = b.truck.slot[m.slotIdx];
+            b.truck.slot[m.slotIdx] = null; b.truck.reserved[m.slotIdx] = false; m.slotIdx = -1;
+            if (u != null) m.Carry(u);
+            foreach (var st in Go(m, z.entryA, true)) yield return st;
+            m.bay = null; b.Assigned--;
+            foreach (var st in IntoSlot(m, sl)) yield return st;
+            foreach (var st in Wait(0.8f)) yield return st;
+            if (m.load != null) { var lu = m.load; m.load = null; Place(sl, lu, hNow); sl.inspected = false; b.done++; inDone++; }
+            Unclaim(m, sl);
+            foreach (var st in OutOfSlot(m, sl)) yield return st;
+            foreach (var st in Go(m, z.entryB)) yield return st;
+            Leave(m);
+        }
+
+        // 상차: 출고장 화물 → 문 → 트럭 빈 칸 → (후진) 문 → 통로로 나옴
+        IEnumerable<object> LoadJob(Mover m, SiteDef s, Bay b, StoreZone z, StoreSlot sl)
+        {
+            m.State = $"{Plan.DoorName(s, b.door)} 상차";
+            foreach (var st in Travel(m, z.entryB)) yield return st;
+            foreach (var st in Enter(m, z)) yield return st;
+            foreach (var st in IntoSlot(m, sl)) yield return st;
+            foreach (var st in Wait(1.0f)) yield return st;
+            if (sl.unit != null) { m.Carry(sl.unit); sl.unit = null; sl.inspected = false; }
+            Unclaim(m, sl);
+            foreach (var st in OutOfSlot(m, sl)) yield return st;
+            foreach (var st in Go(m, z.entryA)) yield return st;
+            if (b.truck == null) { Release(m); yield break; }
+            foreach (var st in Go3(m, Approach(b, m))) yield return st;
+            foreach (var st in Wait(0.8f)) yield return st;
+            if (b.truck == null) { Release(m); yield break; }
+            if (m.load != null) { b.truck.Put(m.slotIdx, m.load); m.load = null; b.done++; outDone++; }
+            b.truck.reserved[m.slotIdx] = false; m.slotIdx = -1;
+            foreach (var st in Go(m, z.entryA, true)) yield return st;
+            m.bay = null; b.Assigned--;
+            foreach (var st in Go(m, z.entryB)) yield return st;
+            Leave(m);
+        }
+
+        // 옮기기: 적치(입고 대기 구역 → 평치) 또는 출고 피킹(평치 → 출고장)
+        IEnumerable<object> MoveJob(Mover m, StoreZone za, StoreSlot sa, StoreZone zb, StoreSlot sb)
+        {
+            m.State = zb.kind == 1 ? "평치 적치" : "출고 피킹 (평치 → 출고장)";
+            foreach (var st in Travel(m, za.entryB)) yield return st;
+            foreach (var st in Enter(m, za)) yield return st;
+            foreach (var st in IntoSlot(m, sa)) yield return st;
+            foreach (var st in Wait(1.0f)) yield return st;
+            bool ok = sa.inspected;
+            if (sa.unit != null) { m.Carry(sa.unit); sa.unit = null; sa.inspected = false; }
+            Unclaim(m, sa);
+            foreach (var st in OutOfSlot(m, sa)) yield return st;
+            foreach (var st in Go(m, za.entryB)) yield return st;
+            Leave(m);
+            foreach (var st in Travel(m, zb.entryB)) yield return st;
+            foreach (var st in Enter(m, zb)) yield return st;
+            foreach (var st in IntoSlot(m, sb)) yield return st;
+            foreach (var st in Wait(0.8f)) yield return st;
+            if (m.load != null) { var lu = m.load; m.load = null; Place(sb, lu, hNow); sb.inspected = ok; if (zb.kind == 1) stored++; }
+            Unclaim(m, sb);
+            if (m.pickFor != null) { m.pickFor.picking--; m.pickFor = null; }
+            foreach (var st in OutOfSlot(m, sb)) yield return st;
+            foreach (var st in Go(m, zb.entryB)) yield return st;
+            Leave(m);
         }
 
         // 트럭 칸 앞: 포크(손) 끝이 칸 가운데에 오도록 조금 앞에서 멈춤
@@ -491,35 +752,6 @@ namespace EquipFX
             float reach = m.kind == MoverInfo.Forklift ? 1.5f : 0.45f;
             var q = p + toDoor * reach; q.y = bay.truck.bed;
             return q;
-        }
-
-        static Vector3 StageSpot(Rect stage, int i, float h, DoorDef door)
-        {
-            int k = i % 6, c = k % 2, r = k / 2;
-            float fx = 0.3f + c * 0.4f, fz = 0.25f + r * 0.25f;
-            if (door.side >= 2) { var t = fx; fx = fz; fz = t; }
-            return new Vector3(Mathf.Lerp(stage.xMin, stage.xMax, fx), h, Mathf.Lerp(stage.yMin, stage.yMax, fz));
-        }
-
-        void DropInStage(Mover m, Bay bay, SiteDef s, DoorDef door)
-        {
-            if (m.load == null) return;
-            var u = m.load; m.load = null;
-            u.SetParent(root, false);
-            u.localScale = Vector3.one;
-            var p = StageSpot(Plan.StageRect(s, door), bay.stage.Count, s.h, door);
-            u.position = new Vector3(p.x, s.h, p.z);
-            u.rotation = Quaternion.LookRotation(new Vector3(-Plan.Outward(door.side).x, 0, -Plan.Outward(door.side).y));
-            bay.stage.Add(u);
-            if (bay.stage.Count > 6) { if (bay.stage[0] != null) Object.Destroy(bay.stage[0].gameObject); bay.stage.RemoveAt(0); }   // 보관 설비로 넘어감
-            bay.done++; inDone++;
-        }
-
-        void FinishInbound(Mover m, SiteDef s)
-        {
-            // 트럭이 떠났거나 마감: 들고 있던 화물은 대기 구역에 내려놓고 쉼
-            if (m.load != null && m.bay != null && m.bay.inbound) DropInStage(m, m.bay, s, s.doors[m.bay.door]);
-            Release(m);
         }
 
         // HUD 이름표용: 주차한 트럭의 주문 상태

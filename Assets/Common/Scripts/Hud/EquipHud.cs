@@ -1374,7 +1374,7 @@ namespace EquipFX
             mfdSummary.style.flexGrow = 1;
             head.Add(mfdSummary);
             mfdPanel.Add(head);
-            var legend = HudStyle.MakeLabel("초록 입고 · 주황 출고 · 파랑 설비 · 점선은 설비 없이 바로 출고(크로스도킹) · 흐린 상자는 흐름에 참여하지 않음 · 상자를 누르면 선택", 11, HudStyle.Muted);
+            var legend = HudStyle.MakeLabel("하차 → 검수 → 평치 보관(또는 설비) → 출고장 → 상차 · 점선은 수단이 없어 멈춘 흐름 · 흐린 상자는 흐름에 참여하지 않음 · 상자를 누르면 선택", 11, HudStyle.Muted);
             HudStyle.Margin(legend, 4, 0, 0, 0);
             mfdPanel.Add(legend);
             mfd = new MfdView();
@@ -1436,6 +1436,19 @@ namespace EquipFX
             return string.Join(" · ", txt) + $" · 일하는 중 {busy}";
         }
 
+        static bool HasWorker(Traffic tr) { foreach (var m in tr.movers) if (m.kind == MoverInfo.Worker) return true; return false; }
+
+        static string QcSub(Traffic tr)
+        {
+            int wk = 0; foreach (var m in tr.movers) if (m.kind == MoverInfo.Worker) wk++;
+            return wk == 0 ? $"작업자 없음 · 검수 대기 {tr.AwaitingQc}" : $"작업자 {wk} · 검수 대기 {tr.AwaitingQc} · 완료 {tr.inspected}";
+        }
+
+        static string BulkSub(Traffic tr) => $"재고 {tr.Stock}/{tr.StockSlots} · 적치 {tr.stored}";
+        static string PickSub(Traffic tr) => $"출고 대기 {tr.OutboundStaged} · 출고 지시 {OrdersOpen(tr)}";
+
+        static int OrdersOpen(Traffic tr) { int n = 0; foreach (var b in tr.bays) if (!b.inbound && b.state == 3) n += Mathf.Max(0, b.units - b.done); return n; }
+
         string ModuleSub(PlacedModule m)
         {
             if (!world.CanHandle(m.entry)) return $"{CargoInfo.Short(world.Cargo)} 처리 불가";
@@ -1462,36 +1475,42 @@ namespace EquipFX
                 mfdSig = sig;
                 var ns = new List<MfdNode>(); var es = new List<MfdEdge>();
                 Color inC = FloorPlan.InCol, outC = FloorPlan.OutCol, eqC = HudStyle.Accent;
+                Color qcC = new Color(0.15f, 0.70f, 0.40f), bulkC = FloorPlan.BulkCol;
                 ns.Add(new MfdNode { id = "gate", col = 0, title = "입고 지점", sub = $"화주 화물 · {CargoInfo.Short(cargo)}", color = inC });
-                ns.Add(new MfdNode { id = "unload", col = 2, title = "하역 (입고)", sub = moverText, color = inC, dim = !anyMover });
-                ns.Add(new MfdNode { id = "load", col = 4, title = "상차 (출고)", sub = moverText, color = outC, dim = !anyMover });
-                ns.Add(new MfdNode { id = "exit", col = 6, title = "출고 지점", sub = "화주 출고", color = outC });
+                ns.Add(new MfdNode { id = "unload", col = 2, title = "하차 (입고)", sub = moverText, color = inC, dim = !anyMover });
+                ns.Add(new MfdNode { id = "qc", col = 3, title = "검수", sub = QcSub(tr), color = qcC, dim = !HasWorker(tr) });
+                ns.Add(new MfdNode { id = "bulk", col = 4, title = "평치 보관", sub = BulkSub(tr), color = bulkC });
+                ns.Add(new MfdNode { id = "pick", col = 5, title = "출고장", sub = PickSub(tr), color = outC });
+                ns.Add(new MfdNode { id = "load", col = 6, title = "상차 (출고)", sub = moverText, color = outC, dim = !anyMover });
+                ns.Add(new MfdNode { id = "exit", col = 8, title = "출고 지점", sub = "화주 출고", color = outC });
+                es.Add(new MfdEdge { a = "unload", b = "qc", color = inC, dashed = !anyMover });
+                es.Add(new MfdEdge { a = "qc", b = "bulk", color = qcC, dashed = !HasWorker(tr) });
+                es.Add(new MfdEdge { a = "bulk", b = "pick", color = bulkC });
+                es.Add(new MfdEdge { a = "pick", b = "load", color = outC, dashed = !anyMover });
                 for (int i = 0; i < s.doors.Count; i++)
                 {
                     var d = s.doors[i]; string id = "door" + i;
                     bool inbound = d.kind == 0;
-                    ns.Add(new MfdNode { id = id, col = inbound ? 1 : 5, title = Plan.DoorName(s, i), sub = BayStatus(tr, i), color = inbound ? inC : outC });
+                    ns.Add(new MfdNode { id = id, col = inbound ? 1 : 7, title = Plan.DoorName(s, i), sub = BayStatus(tr, i), color = inbound ? inC : outC });
                     if (inbound) { es.Add(new MfdEdge { a = "gate", b = id, color = inC }); es.Add(new MfdEdge { a = id, b = "unload", color = inC, dashed = !anyMover }); }
                     else { es.Add(new MfdEdge { a = "load", b = id, color = outC, dashed = !anyMover }); es.Add(new MfdEdge { a = id, b = "exit", color = outC }); }
                 }
-                int ok = 0;
                 for (int k = 0; k < world.modules.Count; k++)
                 {
                     var m = world.modules[k]; if (m == null) continue;
                     bool can = world.CanHandle(m.entry);
                     string id = "mod" + k;
-                    ns.Add(new MfdNode { id = id, col = 3, title = m.entry.name, sub = ModuleSub(m), color = eqC, dim = !can });
+                    ns.Add(new MfdNode { id = id, col = 4, title = m.entry.name, sub = ModuleSub(m), color = eqC, dim = !can });
                     if (!can) continue;
-                    ok++;
-                    es.Add(new MfdEdge { a = "unload", b = id, color = eqC });
-                    es.Add(new MfdEdge { a = id, b = "load", color = eqC });
+                    es.Add(new MfdEdge { a = "qc", b = id, color = eqC });
+                    es.Add(new MfdEdge { a = id, b = "pick", color = eqC });
                 }
-                if (ok == 0) es.Add(new MfdEdge { a = "unload", b = "load", color = eqC, dashed = true });
                 mfd.SetGraph(ns, es);
             }
             else
             {
                 mfd.SetSub("unload", moverText); mfd.SetSub("load", moverText);
+                mfd.SetSub("qc", QcSub(tr)); mfd.SetSub("bulk", BulkSub(tr)); mfd.SetSub("pick", PickSub(tr));
                 for (int i = 0; i < s.doors.Count; i++) mfd.SetSub("door" + i, BayStatus(tr, i));
                 for (int k = 0; k < world.modules.Count; k++) if (world.modules[k] != null) mfd.SetSub("mod" + k, ModuleSub(world.modules[k]));
             }
@@ -1507,6 +1526,9 @@ namespace EquipFX
             else if ((id == "unload" || id == "load") && world.Traffic.movers.Count > 0) world.SelectMover(world.Traffic.movers[0]);
             else if (id == "unload" || id == "load") Toast("왼쪽 라이브러리 '하역 수단'에서 지게차나 작업자를 끌어다 센터 안에 놓으세요");
             else if (id == "gate" || id == "exit") Toast("입고·출고 지점은 부지 서쪽 진입로에 있습니다");
+            else if (id == "qc") Toast("작업자가 입고 대기 구역의 화물을 검수합니다. 검수가 끝나야 평치로 옮깁니다.");
+            else if (id == "bulk") Toast("평치 구역: 검수한 화물을 바닥에 적치합니다. 출고 지시가 나오면 여기서 출고장으로 옮깁니다.");
+            else if (id == "pick") Toast("출고장: 출고문 안쪽 대기 구역. 여기 모인 화물을 트럭에 싣습니다.");
         }
 
         void UpdatePlant()
@@ -1911,6 +1933,11 @@ namespace EquipFX
                 var inC = FloorPlan.InCol; inC.a = 0.92f; var outC = FloorPlan.OutCol; outC.a = 0.92f;
                 Tag(cam, new Vector3(Plan.InPoint.x + 1.5f, 2.2f, Plan.InPoint.y), $"입고 지점 · {CargoInfo.Short(world.Cargo)}", inC, 12);
                 Tag(cam, new Vector3(Plan.OutPoint.x + 1.5f, 5.2f, Plan.OutPoint.y), "출고 지점", outC, 12);
+                if (s.doors.Count > 0)
+                {
+                    var br = Plan.BulkRect(s); var bc = FloorPlan.BulkCol; bc.a = 0.9f;
+                    Tag(cam, new Vector3(br.center.x, s.h + 2.2f, br.center.y), $"평치 구역 · 재고 {world.Traffic.Stock}/{world.Traffic.StockSlots}", bc, 11);
+                }
                 var yardSides = new HashSet<int>();
                 foreach (var d in s.doors)
                     if (yardSides.Add(d.side))
