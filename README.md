@@ -240,3 +240,41 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 - 샷 시점은 각 장면 시뮬레이션을 기본 설정으로 돌려 실제 동작(등반, 인출, 리프트, 투하 등) 시각에 맞췄습니다. 설정을 바꾸면 추적 샷은 같은 번호 로봇을 계속 따라갑니다.
 - AutoStore 로봇: 상판에 흰 번호(01~08), 도장을 밝은 빨강으로.
 - Blender 스크립트의 카메라(CAM_KEYS)는 바꾸지 않았습니다. 최종 영상은 Unity 녹화 메뉴를 쓰세요.
+
+---
+
+# Libiao T-Sort 핑거형 로봇 소터 — 같은 방식의 여섯 번째 장면
+
+넓은 메인 데크에서 빗살처럼 뻗은 핑거 6개 위를 노란 로봇 30대가 달립니다. 왼쪽 투입 스테이션 4곳에서 작업자가 스캔한 소포를 받아 목적지 슈트 옆까지 가서 트레이를 기울이면, 소포가 핑거 사이 틈으로 떨어져 바닥의 슈트 통(168개)에 쌓입니다. 핑거는 나가는 차선과 돌아오는 차선 2차선이고 끝에서 U턴합니다. 같은 Unity 프로젝트 안에 **애니메이션 → T-Sorter** 메뉴로 들어 있습니다. 기존 Libiao 장면(격자형 데크 + 아래층 자루)과는 다른, 공식 T-Sort 솔루션 그림의 핑거형 플랫폼입니다.
+
+![T-Sort 핑거 사이 틈](docs/images/tsorter_gap.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/tsorter-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_tsorter_trace.js` | 시뮬레이션 → Blender 궤적 `blender/tsorter_trace.json` |
+| `blender/tsorter_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/tsorter/` | 로봇·슈트 통·소포 FBX, 로봇 GLB, 렌더 이미지 |
+| `Assets/TSorter/Scripts/TSorterSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/TSorter/Scripts/TSorterView.cs` | 데크·핑거·슈트·통·스테이션·충전 파일·로봇·소포·조명·후처리 자동 구성, HUD |
+| `Assets/TSorter/Scripts/TSorterCamera.cs` | Blender와 같은 30초 카메라 동선 (트래킹·틈 안·크레인 샷) / 마우스 오비트 |
+| `Assets/TSorter/Scripts/TSorterCaption.cs` | 장비 이름 캡션 (타이틀 → 장면별 챕터 → 엔드 카드), 녹화 프레임에 합성 |
+| `Assets/TSorter/Scripts/TSorterMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/TSorter/Editor/TSorterMenu.cs` | `애니메이션 → T-Sorter` 메뉴 |
+| `docs/tsorter-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: GitHub에서 PR을 머지한 뒤 `git pull`, 프로젝트를 열고 메뉴 **애니메이션 → T-Sorter → Open T-Sorter Scene** → **Play**. 30초 영상은 **애니메이션 → T-Sorter → Record 30s Movie (MP4, 1920x1080)** → `Recordings/tsorter_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(600초 워밍업 직후, seed 3)에서 시작합니다. 캡션은 씬의 `TSorterView` → `Show Caption` 으로 끌 수 있습니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --still 520 --gpu
+
+# 30초 영상 (1920x1080, 30fps). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace blender/tsorter_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_tsorter_trace.js --robots 20 --seed 5  (카메라 동선은 seed 3, warmup 600 기준)
+```
+
+결과: 로봇 30대에서 시간당 약 2,150건 (공개 프로필 "2000 Parts per hour" 와 비슷한 규모). 핑거형 플랫폼 구성, 투입 스테이션 수동 투입 + 자동 스캔, 로봇 480×380×230 mm는 공개 자료이고 셀 피치·데크 높이·핑거 길이·속도·슈트 통 크기는 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/tsorter-research.md](docs/tsorter-research.md).
