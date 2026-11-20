@@ -77,6 +77,62 @@ namespace EquipFX
             return b;
         }
 
+        // 기본 스크롤바(화살표 단추 + 회색 트랙) 대신 얇고 둥근 막대만 보이는 모던 스크롤바
+        public static ScrollView MakeScroll()
+        {
+            var sv = new ScrollView(ScrollViewMode.Vertical)
+            {
+                horizontalScrollerVisibility = ScrollerVisibility.Hidden,
+                verticalScrollerVisibility = ScrollerVisibility.Auto,
+                mouseWheelScrollSize = 48f,
+            };
+            StyleScroller(sv.verticalScroller, sv);
+            return sv;
+        }
+
+        public static void StyleScroller(Scroller sc, VisualElement hoverArea)
+        {
+            if (sc == null) return;
+            const float W = 10f;
+            sc.style.width = W; sc.style.minWidth = W;
+            sc.style.backgroundColor = Color.clear; Border(sc, 0, Color.clear);
+            Margin(sc, 2, 0, 2, 0);
+            if (sc.lowButton != null) sc.lowButton.style.display = DisplayStyle.None;
+            if (sc.highButton != null) sc.highButton.style.display = DisplayStyle.None;
+            var sl = sc.slider;
+            if (sl == null) return;
+            Margin(sl, 0, 0, 0, 0); Pad(sl, 0, 0);
+            sl.style.width = W; sl.style.minWidth = W; sl.style.flexGrow = 1;
+            var tracker = sl.Q("unity-tracker");
+            if (tracker != null)
+            {
+                tracker.style.backgroundColor = Color.clear; Border(tracker, 0, Color.clear);
+                tracker.style.left = 0; tracker.style.right = 0; tracker.style.width = StyleKeyword.Auto;
+            }
+            var dragger = sl.Q("unity-dragger");
+            var dragBorder = sl.Q("unity-dragger-border");
+            if (dragBorder != null) { dragBorder.style.backgroundColor = Color.clear; Border(dragBorder, 0, Color.clear); dragBorder.style.display = DisplayStyle.None; }
+            if (dragger == null) return;
+            Border(dragger, 0, Color.clear);
+            Color idle = Dark ? C(0xFFFFFF, 0.16f) : C(0x0F172A, 0.16f);
+            Color near = Dark ? C(0xFFFFFF, 0.28f) : C(0x0F172A, 0.28f);
+            Color hot = Dark ? C(0xFFFFFF, 0.45f) : C(0x0F172A, 0.42f);
+            bool overArea = false, overBar = false;
+            void Paint()
+            {
+                float w = overBar ? 6f : 4f;
+                dragger.style.width = w; dragger.style.left = (W - w) / 2f;
+                dragger.style.marginLeft = 0; dragger.style.marginRight = 0;
+                Radius(dragger, w / 2f);
+                dragger.style.backgroundColor = overBar ? hot : overArea ? near : idle;
+            }
+            Paint();
+            hoverArea?.RegisterCallback<PointerEnterEvent>(_ => { overArea = true; Paint(); });
+            hoverArea?.RegisterCallback<PointerLeaveEvent>(_ => { overArea = false; Paint(); });
+            sc.RegisterCallback<PointerEnterEvent>(_ => { overBar = true; Paint(); });
+            sc.RegisterCallback<PointerLeaveEvent>(_ => { overBar = false; Paint(); });
+        }
+
         // 선택 상태 표시 (속도 칩, 카메라 모드, 토글)
         public static void SetOn(Button b, bool on)
         {
