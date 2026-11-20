@@ -74,7 +74,8 @@ namespace EquipFX
         bool paused, loop = true, captionsOn = true, hudVisible = true, recording, loading, recordPending;
         float clockStart = -1f, ffTarget = -1f, pendingSeek = -1f;
         float nextUiRefresh, toastUntil;
-        bool overTop, overLeft, overDash, overRight, plantDirty = true, marksSet;
+        bool overTop, overLeft, overDash, overRight, overPopup, overModal, plantDirty = true, marksSet;
+        static bool cargoAsked;   // 이번 실행에서 화물 선택 창을 보였는지
         readonly Dictionary<string, Dictionary<string, double>> overrides = new Dictionary<string, Dictionary<string, double>>();
         readonly List<Vector2> samples = new List<Vector2>();
         readonly List<float> rates = new List<float>();
@@ -90,7 +91,17 @@ namespace EquipFX
         IconButton playBtn;
         TimelineBar timeline;
         Button modeLayoutBtn, modeAnimBtn, camCineBtn, camOrbitBtn, captionBtn, loopBtn, recBtn;
-        DropdownField speedDd, themeDd;
+        HudDropdown speedDd, themeDd;
+        // 화물 선택 · 도크 이름표
+        VisualElement cargoModal, cargoTiles;
+        Button cargoChip;
+        Label cargoLbl;
+        CargoKind modalPick = CargoKind.Pallet;
+        bool modalStartFlow, siteDirty, overBanner;
+        VisualElement siteBanner, siteBox;
+        Label siteBannerLbl, paramTitle;
+        Button siteBannerKeep;
+        static readonly HashSet<string> collapsedGroups = new HashSet<string>();
         readonly Dictionary<EquipEntry, VisualElement> cards = new Dictionary<EquipEntry, VisualElement>();
         // 대시보드
         VisualElement plantBox, plantTiles, plantList, selDashBox, kpiGrid;
@@ -183,6 +194,9 @@ namespace EquipFX
             world = w;
             world.SelectionChanged += OnSelectionChanged;
             world.LayoutChanged += OnLayoutChanged;
+            world.CargoChanged += OnCargoChanged;
+            world.SiteChanged += OnSiteChanged;
+            world.DrawingChanged += OnDrawingChanged;
             entry = null; view = null; selModule = null; clockStart = -1f; ffTarget = -1f; pendingSeek = -1f;
             samples.Clear(); rates.Clear(); plantDirty = true;
             RefreshEntryUi(); UpdateModeUi(); ApplyTimeScale();
@@ -193,6 +207,9 @@ namespace EquipFX
             if (world == null) return;
             world.SelectionChanged -= OnSelectionChanged;
             world.LayoutChanged -= OnLayoutChanged;
+            world.CargoChanged -= OnCargoChanged;
+            world.SiteChanged -= OnSiteChanged;
+            world.DrawingChanged -= OnDrawingChanged;
             world = null; selModule = null; plantDirty = true;
             UpdateModeUi();
         }
@@ -200,7 +217,8 @@ namespace EquipFX
         void OnSelectionChanged()
         {
             var newSel = world != null ? world.Selected : null;
-            if (newSel != null && newSel == selModule) { RefreshPart(); return; }   // 같은 설비 안에서 하위 오브젝트만 바뀜
+            if (newSel != null && newSel == selModule) { RefreshPart(); return; }
+            siteDirty = false;   // 같은 설비 안에서 하위 오브젝트만 바뀜
             selModule = newSel;
             entry = selModule != null ? selModule.entry : null;
             view = selModule != null ? selModule.view : null;
@@ -209,6 +227,18 @@ namespace EquipFX
         }
 
         void OnLayoutChanged() => plantDirty = true;
+
+        void OnCargoChanged() { RefreshCards(); RefreshEntryUi(false); plantDirty = true; }
+
+        void OnSiteChanged() => siteDirty = true;
+
+        void OnDrawingChanged()
+        {
+            if (siteBanner == null || world == null) return;
+            siteBanner.style.display = world.DrawingSite ? DisplayStyle.Flex : DisplayStyle.None;
+            siteBannerKeep.style.display = world.Site.drawn ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!world.DrawingSite) { overBanner = false; UpdOver(); }
+        }
 
         void Attach(EquipEntry e, Component v)
         {
@@ -262,6 +292,8 @@ namespace EquipFX
                 else if (loop && !loading && clockStart >= 0 && Elapsed >= MovieLength) Restart(0f);
             }
 
+            if (LayoutMode && !loading && !cargoAsked) ShowCargoModal(true);
+            UpdateDockLabels();
             Sample();
             UpdateUiFast();
             if (Time.unscaledTime >= nextUiRefresh) { nextUiRefresh = Time.unscaledTime + 0.2f; UpdateUiSlow(); }
@@ -461,7 +493,7 @@ namespace EquipFX
         {
             hudVisible = on;
             root.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
-            if (!on) { overTop = overLeft = overDash = overRight = false; HudInput.PointerOverUi = false; }
+            if (!on) { overTop = overLeft = overDash = overRight = overPopup = false; HudInput.PointerOverUi = overModal; }
             else Toast("H: HUD 숨기기 · Space: 재생/일시정지");
         }
 
@@ -584,7 +616,7 @@ namespace EquipFX
             var docRoot = doc.rootVisualElement;
             docRoot.Clear();
             cards.Clear(); kpiLabels.Clear(); plantRows.Clear(); plantUnitLbls.Clear(); paramFields.Clear(); partRows.Clear(); shownPart = null;
-            overTop = overLeft = overDash = overRight = false; HudInput.PointerOverUi = false;
+            overTop = overLeft = overDash = overRight = overPopup = overModal = overBanner = false; HudInput.PointerOverUi = false;
             docRoot.pickingMode = PickingMode.Ignore;
             var font = HudFont.Get();
             if (font.HasValue) docRoot.style.unityFontDefinition = font.Value;
@@ -622,6 +654,10 @@ namespace EquipFX
             loadingOverlay.style.display = loading ? DisplayStyle.Flex : DisplayStyle.None;
             docRoot.Add(loadingOverlay);
 
+            BuildDockLabels();
+            BuildSiteBanner();
+            BuildCargoModal();
+            RefreshCards();
             Hover(topBar, b => overTop = b); Hover(leftPanel, b => overLeft = b);
             Hover(dashPanel, b => overDash = b); Hover(rightPanel, b => overRight = b);
             plantDirty = true;
@@ -631,10 +667,12 @@ namespace EquipFX
 
         void Hover(VisualElement e, Action<bool> set)
         {
-            void Upd() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight;
+            void Upd() => UpdOver();
             e.RegisterCallback<PointerEnterEvent>(_ => { set(true); Upd(); });
             e.RegisterCallback<PointerLeaveEvent>(_ => { set(false); Upd(); });
         }
+
+        void UpdOver() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight || overPopup || overModal || overBanner;
 
         static VisualElement Panel()
         {
@@ -703,10 +741,9 @@ namespace EquipFX
             // 재생
             playBtn = new IconButton(IconButton.Kind.Pause, 36, TogglePause, true);
             topBar.Add(playBtn);
-            speedDd = new DropdownField(new List<string> { "0.25×", "0.5×", "1×", "2×", "4×", "8×" }, 2);
-            speedDd.RegisterValueChangedCallback(ev => { int i = speedDd.index; if (i >= 0 && i < Speeds.Length) SetSpeed(Speeds[i]); });
-            StyleDropdown(speedDd, 80);
-            speedDd.SetValueWithoutNotify(SpeedLabel(speed));
+            speedDd = new HudDropdown(new List<string> { "0.25×", "0.5×", "1×", "2×", "4×", "8×" }, SpeedIndex(), 80,
+                i => { if (i >= 0 && i < Speeds.Length) SetSpeed(Speeds[i]); }, () => root);
+            speedDd.popupOpenChanged = b => { overPopup = b; UpdOver(); };
             topBar.Add(speedDd);
             topBar.Add(Gap(8));
 
@@ -737,7 +774,11 @@ namespace EquipFX
 
             // 배치 도구
             layoutTools = Row(); layoutTools.style.flexGrow = 1; layoutTools.pickingMode = PickingMode.Position;
-            var hint = HudStyle.MakeLabel("끌어다 놓기 · 클릭 선택 · 끌어서 이동 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 휠 확대", 12, HudStyle.Muted);
+            cargoChip = HudStyle.MakeButton("화물", ShowCargoModal);
+            cargoChip.tooltip = "물류센터가 다루는 화물 바꾸기";
+            layoutTools.Add(cargoChip);
+            layoutTools.Add(Gap(8));
+            var hint = HudStyle.MakeLabel("끌어다 놓기 · 클릭 선택 · 끌어서 이동 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 가운데 끌기 이동 · 휠 확대", 12, HudStyle.Muted);
             hint.style.flexGrow = 1; hint.style.overflow = Overflow.Hidden; hint.style.textOverflow = TextOverflow.Ellipsis;
             layoutTools.Add(hint);
             layoutTools.Add(HudStyle.MakeButton("모두 지우기", () => world?.ClearAll()));
@@ -745,14 +786,20 @@ namespace EquipFX
 
             // 오른쪽: 테마 · 숨김 · 닫기
             topBar.Add(Gap(10));
-            themeDd = new DropdownField(new List<string> { "다크", "라이트" }, HudStyle.Dark ? 0 : 1);
-            themeDd.RegisterValueChangedCallback(ev => SetTheme(themeDd.index == 0));
-            StyleDropdown(themeDd, 92);
+            themeDd = new HudDropdown(new List<string> { "다크", "라이트" }, HudStyle.Dark ? 0 : 1, 92, i => SetTheme(i == 0), () => root);
+            themeDd.popupOpenChanged = b => { overPopup = b; UpdOver(); };
             topBar.Add(themeDd);
             var hide = new IconButton(IconButton.Kind.Hide, 32, () => SetHudVisible(false));
             topBar.Add(hide);
             var close = new IconButton(IconButton.Kind.Close, 32, Quit) { hoverBg = HudStyle.Rec };
             topBar.Add(close);
+        }
+
+        int SpeedIndex()
+        {
+            int best = 2;
+            for (int i = 0; i < Speeds.Length; i++) if (Mathf.Abs(Speeds[i] - speed) < Mathf.Abs(Speeds[best] - speed)) best = i;
+            return best;
         }
 
         static string SpeedLabel(float s) => s < 1 ? $"{s:0.##}×" : $"{s:0}×";
@@ -775,13 +822,72 @@ namespace EquipFX
             var sv = HudStyle.MakeScroll();
             sv.style.flexGrow = 1; HudStyle.Margin(sv, 6, 0, 0, 0);
             leftPanel.Add(sv);
-            string lastCat = null;
-            foreach (var e in EquipCatalog.All)
+
+            // 건물 · 입출고 (센터의 뼈대)
+            var site = Group(sv, "건물 · 입출고", 3);
+            site.Add(ToolCard("물류센터 영역", "바닥을 끌어 건물 직사각형을 다시 그림", () => { if (LayoutMode) world?.BeginSiteDrawing(); else Toast("배치 모드에서 쓸 수 있습니다"); }));
+            site.Add(ToolCard("입고 도크 문", "입고 쪽 벽에 출입문 추가 (끌어서 이동)", () => { if (LayoutMode) world?.AddDoor(0); else Toast("배치 모드에서 쓸 수 있습니다"); }));
+            site.Add(ToolCard("출고 도크 문", "출고 쪽 벽에 출입문 추가 (끌어서 이동)", () => { if (LayoutMode) world?.AddDoor(1); else Toast("배치 모드에서 쓸 수 있습니다"); }));
+            // 설비 묶음
+            foreach (var g in EquipCatalog.Groups)
             {
-                string cat = e.category.Split('·')[0].Trim();
-                if (cat != lastCat) { sv.Add(SectionTitle(cat)); lastCat = cat; }
-                sv.Add(MakeCard(e));
+                var list = EquipCatalog.All.FindAll(e => EquipCatalog.GroupOf(e) == g);
+                if (list.Count == 0) continue;
+                var box = Group(sv, g, list.Count);
+                foreach (var e in list) box.Add(MakeCard(e));
             }
+        }
+
+        // 접었다 펼 수 있는 묶음 머리 + 내용 상자
+        VisualElement Group(VisualElement parent, string title, int count)
+        {
+            var head = new VisualElement();
+            head.style.flexDirection = FlexDirection.Row; head.style.alignItems = Align.Center;
+            HudStyle.Pad(head, 7, 8); HudStyle.Radius(head, 8); HudStyle.Margin(head, 8, 0, 2, 0);
+            bool open = !collapsedGroups.Contains(title);
+            var chev = new VisualElement { pickingMode = PickingMode.Ignore };
+            chev.style.width = 12; chev.style.height = 12; chev.style.flexShrink = 0; HudStyle.Margin(chev, 0, 8, 0, 0);
+            chev.generateVisualContent += mgc =>
+            {
+                var pp = mgc.painter2D; pp.strokeColor = HudStyle.Muted; pp.lineWidth = 1.8f; pp.lineCap = LineCap.Round; pp.lineJoin = LineJoin.Round;
+                pp.BeginPath();
+                if (!collapsedGroups.Contains(title)) { pp.MoveTo(new Vector2(2f, 4f)); pp.LineTo(new Vector2(6f, 8f)); pp.LineTo(new Vector2(10f, 4f)); }
+                else { pp.MoveTo(new Vector2(4f, 2f)); pp.LineTo(new Vector2(8f, 6f)); pp.LineTo(new Vector2(4f, 10f)); }
+                pp.Stroke();
+            };
+            var t = HudStyle.MakeLabel(title, 12, HudStyle.Strong, true); t.style.flexGrow = 1;
+            var n = HudStyle.MakeLabel(count.ToString(), 11, HudStyle.Muted);
+            head.Add(chev); head.Add(t); head.Add(n);
+            var box = new VisualElement();
+            HudStyle.Margin(box, 0, 0, 0, 8);
+            box.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+            head.RegisterCallback<PointerEnterEvent>(_ => head.style.backgroundColor = HudStyle.TileHover);
+            head.RegisterCallback<PointerLeaveEvent>(_ => head.style.backgroundColor = Color.clear);
+            head.RegisterCallback<ClickEvent>(_ =>
+            {
+                bool nowOpen = collapsedGroups.Contains(title);
+                if (nowOpen) collapsedGroups.Remove(title); else collapsedGroups.Add(title);
+                box.style.display = nowOpen ? DisplayStyle.Flex : DisplayStyle.None;
+                chev.MarkDirtyRepaint();
+            });
+            parent.Add(head); parent.Add(box);
+            return box;
+        }
+
+        VisualElement ToolCard(string name, string desc, Action onClick)
+        {
+            var c = new VisualElement();
+            c.style.flexDirection = FlexDirection.Row; c.style.alignItems = Align.Center;
+            HudStyle.Radius(c, 10); HudStyle.Pad(c, 8, 10); HudStyle.Margin(c, 0, 0, 2, 0);
+            var txt = new VisualElement { pickingMode = PickingMode.Ignore }; txt.style.flexGrow = 1; txt.style.flexShrink = 1;
+            txt.Add(HudStyle.MakeLabel(name, 13, HudStyle.Strong, true));
+            var d = HudStyle.MakeLabel(desc, 11, HudStyle.Muted); d.style.whiteSpace = WhiteSpace.Normal;
+            txt.Add(d);
+            c.Add(txt);
+            c.RegisterCallback<PointerEnterEvent>(_ => c.style.backgroundColor = HudStyle.TileHover);
+            c.RegisterCallback<PointerLeaveEvent>(_ => c.style.backgroundColor = Color.clear);
+            c.RegisterCallback<ClickEvent>(_ => onClick());
+            return c;
         }
 
         VisualElement MakeCard(EquipEntry e)
@@ -792,7 +898,8 @@ namespace EquipFX
             var txt = new VisualElement { pickingMode = PickingMode.Ignore }; txt.style.flexGrow = 1; txt.style.flexShrink = 1;
             var n = HudStyle.MakeLabel(e.name, 13, HudStyle.Strong, true);
             var k = HudStyle.MakeLabel(e.korean, 11, HudStyle.Muted); k.style.whiteSpace = WhiteSpace.Normal;
-            txt.Add(n); txt.Add(k);
+            var cg = HudStyle.MakeLabel("화물: " + CargoInfo.Names(e.cargo), 10, HudStyle.Muted); cg.name = "cargo"; HudStyle.Margin(cg, 2, 0, 0, 0);
+            txt.Add(n); txt.Add(k); txt.Add(cg);
             c.Add(txt);
             // 애니메이션으로 보기
             var play = new IconButton(IconButton.Kind.Play, 26, () => OpenAnimation(e));
@@ -804,7 +911,9 @@ namespace EquipFX
             c.RegisterCallback<PointerDownEvent>(ev =>
             {
                 if (ev.button != 0) return;
-                if (LayoutMode && world != null) { world.BeginDrag(e); Toast($"{e.name}: 바닥에 놓으세요 (Esc 취소)"); }
+                if (!LayoutMode || world == null) return;
+                if (world.BeginDrag(e)) Toast($"{e.name}: 바닥에 놓으세요 (Esc 취소)");
+                else Toast($"{e.name} 은(는) {CargoInfo.Name(world.Cargo)}을(를) 처리할 수 없습니다. 처리 화물: {CargoInfo.Names(e.cargo)}");
             });
             c.RegisterCallback<ClickEvent>(_ => { if (!LayoutMode) OpenAnimation(e); });
             cards[e] = c;
@@ -953,7 +1062,8 @@ namespace EquipFX
             partCard.style.display = DisplayStyle.None;
 
             sv.Add(partCard);
-            sv.Add(catLbl); sv.Add(titleLbl); sv.Add(koLbl); sv.Add(descLbl);
+            cargoLbl = HudStyle.MakeLabel("", 12, HudStyle.Text, true); cargoLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(cargoLbl, 8, 0, 0, 0);
+            sv.Add(catLbl); sv.Add(titleLbl); sv.Add(koLbl); sv.Add(descLbl); sv.Add(cargoLbl);
 
             // 배치 모드: 위치 · 동작
             moduleBox = new VisualElement();
@@ -970,7 +1080,13 @@ namespace EquipFX
             moduleBox.Add(acts);
             sv.Add(moduleBox);
 
-            sv.Add(SectionTitle("설정"));
+            // 물류센터 건물 / 출입문 속성
+            siteBox = new VisualElement();
+            siteBox.style.display = DisplayStyle.None;
+            sv.Add(siteBox);
+
+            paramTitle = SectionTitle("설정");
+            sv.Add(paramTitle);
             paramBox = new VisualElement();
             sv.Add(paramBox);
 
@@ -1000,11 +1116,33 @@ namespace EquipFX
             titleLbl.text = has ? (LayoutMode && selModule != null ? selModule.Label : entry.name) : (LayoutMode ? "선택된 설비 없음" : "열린 설비 없음");
             koLbl.text = has ? entry.korean : (LayoutMode ? "바닥에 설치한 설비를 클릭하면 여기에 속성이 나옵니다." : "왼쪽 라이브러리에서 설비를 고르세요.");
             descLbl.text = has ? entry.desc : "";
+            if (cargoLbl != null)
+            {
+                bool bad = has && LayoutMode && world != null && !world.CanHandle(entry);
+                cargoLbl.text = !has ? "" : bad ? $"처리 화물: {CargoInfo.Names(entry.cargo)}  ·  지금 화물({CargoInfo.Short(world.Cargo)})은 처리할 수 없음"
+                                              : $"처리 화물: {CargoInfo.Names(entry.cargo)}";
+                cargoLbl.style.color = bad ? HudStyle.Bad : HudStyle.Text;
+            }
             tpUnitLbl.text = has ? entry.throughputUnit : "";
             selDashBox.style.display = has ? DisplayStyle.Flex : DisplayStyle.None;
             moduleBox.style.display = LayoutMode && selModule != null ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshPart();
             plantDirty = true;
+            bool site = SiteSelected;
+            siteBox.style.display = site ? DisplayStyle.Flex : DisplayStyle.None;
+            paramTitle.style.display = paramBox.style.display = site ? DisplayStyle.None : DisplayStyle.Flex;
+            if (site)
+            {
+                specBox.style.display = DisplayStyle.None;
+                bool door = world.SelectedDoor >= 0 && world.SelectedDoor < world.Site.doors.Count;
+                catLbl.text = "물류센터";
+                titleLbl.text = door ? Plan.DoorName(world.Site, world.SelectedDoor) : "물류센터 건물";
+                koLbl.text = door ? "트럭이 붙는 도크 출입문. 장면에서 끌어 벽을 따라 옮기거나 아래에서 바꿀 수 있습니다."
+                                  : "바닥은 트럭 적재함 높이만큼 올라가 있고, 입고 지점과 출고 지점을 마주하는 벽에 출입문이 있습니다.";
+                descLbl.text = ""; cargoLbl.text = $"화물: {CargoInfo.Name(world.Cargo)}"; cargoLbl.style.color = HudStyle.Text;
+                RebuildSiteBox();
+                return;
+            }
             if (!rebuild) return;
 
             kpiGrid.Clear(); kpiLabels.Clear();
@@ -1018,6 +1156,7 @@ namespace EquipFX
             RebuildParams();
             RebuildSpecs();
             marksSet = false;
+            if (SiteSelected) specBox.style.display = DisplayStyle.None;
         }
 
         void RebuildParams()
@@ -1121,7 +1260,7 @@ namespace EquipFX
         {
             if (playBtn == null) return;
             playBtn.Icon = paused ? IconButton.Kind.Play : IconButton.Kind.Pause;
-            speedDd?.SetValueWithoutNotify(SpeedLabel(speed));
+            speedDd?.SetIndexWithoutNotify(SpeedIndex());
             bool cine = GetBool(view, "cinematicCamera", true);
             HudStyle.SetOn(camCineBtn, cine); HudStyle.SetOn(camOrbitBtn, !cine);
             HudStyle.SetOn(captionBtn, captionsOn); HudStyle.SetOn(loopBtn, loop);
@@ -1147,6 +1286,7 @@ namespace EquipFX
             if (!captionsOn && !LayoutMode) SetCaptions(false);
             if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
             if (LayoutMode) UpdatePlant();
+            if (siteDirty && !HudInput.Typing) { siteDirty = false; if (SiteSelected) RebuildSiteBox(); }
             if (shownPart != null) UpdatePartRows();
 
             if (!Ready)
@@ -1179,6 +1319,8 @@ namespace EquipFX
             {
                 if (m == null) continue;
                 if (!m.built || m.view == null || !m.entry.ready(m.view)) { val.text = "설치 중…"; continue; }
+                if (!world.CanHandle(m.entry)) { val.text = "화물 처리 불가"; val.style.color = HudStyle.Bad; continue; }
+                val.style.color = HudStyle.Muted;
                 built++;
                 robots += m.entry.robotCount(m.view);
                 double tp = m.entry.throughput(m.view);
@@ -1280,6 +1422,303 @@ namespace EquipFX
         };
 
         static string PartFieldName(string n) => PartNames.TryGetValue(n, out var k) ? $"{k}" : n;
+
+        // ---------------------------------------------------------------- 물류센터 건물 · 출입문
+        bool SiteSelected => LayoutMode && world != null && (world.BuildingSelected || world.SelectedDoor >= 0);
+
+        void BuildSiteBanner()
+        {
+            siteBanner = new VisualElement();
+            siteBanner.style.position = Position.Absolute; siteBanner.style.top = 80; siteBanner.style.alignSelf = Align.Center;
+            siteBanner.style.flexDirection = FlexDirection.Row; siteBanner.style.alignItems = Align.Center;
+            siteBanner.style.backgroundColor = HudStyle.Panel; HudStyle.Radius(siteBanner, 14); HudStyle.Pad(siteBanner, 10, 16);
+            HudStyle.Border(siteBanner, 2, HudStyle.Accent);
+            var txt = new VisualElement { pickingMode = PickingMode.Ignore };
+            txt.Add(HudStyle.MakeLabel("물류센터 영역 그리기", 15, HudStyle.Strong, true));
+            siteBannerLbl = HudStyle.MakeLabel("바닥을 마우스로 끌어 건물 직사각형을 그리세요 (최소 20 × 20 m, 1 m 단위). 바닥은 트럭 상차 높이로 올라갑니다.", 12, HudStyle.Muted);
+            HudStyle.Margin(siteBannerLbl, 3, 0, 0, 0);
+            txt.Add(siteBannerLbl);
+            siteBanner.Add(txt);
+            siteBanner.Add(Gap(16));
+            var def = HudStyle.MakeButton("기본 크기 140 × 80 m", () => world?.EndSiteDrawing(true));
+            siteBannerKeep = HudStyle.MakeButton("지금 건물 유지", () => world?.EndSiteDrawing(false));
+            siteBanner.Add(def); siteBanner.Add(siteBannerKeep);
+            siteBanner.RegisterCallback<PointerEnterEvent>(_ => { overBanner = true; UpdOver(); });
+            siteBanner.RegisterCallback<PointerLeaveEvent>(_ => { overBanner = false; UpdOver(); });
+            siteBanner.style.display = DisplayStyle.None;
+            root.Add(siteBanner);
+            OnDrawingChanged();
+        }
+
+        TextField MakeField(string value, float width)
+        {
+            var tf = new TextField { value = value, isDelayed = true };
+            tf.style.width = width; tf.style.height = 30; tf.style.fontSize = 13; HudStyle.Margin(tf, 0, 0, 0, 0);
+            var input = tf.Q(className: TextField.inputUssClassName);
+            if (input != null)
+            {
+                input.style.backgroundColor = HudStyle.Field; input.style.color = HudStyle.Strong;
+                HudStyle.Border(input, 0, Color.clear); HudStyle.Radius(input, 8); HudStyle.Pad(input, 0, 8);
+            }
+            tf.Query<TextElement>().ForEach(te => te.style.color = HudStyle.Strong);
+            return tf;
+        }
+
+        static float ParseF(string t, float fallback) =>
+            float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : fallback;
+
+        VisualElement FieldRow(string label, string hint, TextField tf)
+        {
+            var row = Row(); HudStyle.Margin(row, 0, 0, 8, 0);
+            var labels = new VisualElement { pickingMode = PickingMode.Ignore }; labels.style.flexGrow = 1;
+            labels.Add(HudStyle.MakeLabel(label, 12, HudStyle.Text));
+            if (!string.IsNullOrEmpty(hint)) labels.Add(HudStyle.MakeLabel(hint, 10, HudStyle.Muted));
+            row.Add(labels); row.Add(tf);
+            return row;
+        }
+
+        VisualElement Stepper(string label, int value, Action<int> set)
+        {
+            var row = Row(); HudStyle.Margin(row, 0, 0, 8, 0);
+            var l = HudStyle.MakeLabel(label, 12, HudStyle.Text); l.style.flexGrow = 1;
+            var minus = HudStyle.MakeButton("−", () => set(value - 1), 32); minus.style.height = 28;
+            var v = HudStyle.MakeLabel(value.ToString(), 14, HudStyle.Strong, true); v.style.width = 28; v.style.unityTextAlign = TextAnchor.MiddleCenter;
+            var plus = HudStyle.MakeButton("+", () => set(value + 1), 32); plus.style.height = 28;
+            row.Add(l); row.Add(minus); row.Add(v); row.Add(plus);
+            return row;
+        }
+
+        void RebuildSiteBox()
+        {
+            if (siteBox == null || world == null) return;
+            siteBox.Clear();
+            var s = world.Site;
+            int di = world.SelectedDoor;
+            if (di >= 0 && di < s.doors.Count)
+            {
+                var d = s.doors[di];
+                siteBox.Add(SectionTitle("출입문"));
+                var kinds = Row(); HudStyle.Margin(kinds, 0, 0, 8, 0);
+                var kIn = HudStyle.MakeButton("입고", () => world.UpdateDoor(di, 0, d.side, d.pos), 70);
+                var kOut = HudStyle.MakeButton("출고", () => world.UpdateDoor(di, 1, d.side, d.pos), 70);
+                HudStyle.SetOn(kIn, d.kind == 0); HudStyle.SetOn(kOut, d.kind == 1);
+                kinds.Add(HudStyle.MakeLabel("종류", 12, HudStyle.Text)); kinds.Add(Gap(10)); kinds.Add(kIn); kinds.Add(kOut);
+                siteBox.Add(kinds);
+                var walls = Row(); HudStyle.Margin(walls, 0, 0, 8, 0);
+                walls.Add(HudStyle.MakeLabel("벽", 12, HudStyle.Text)); walls.Add(Gap(22));
+                for (int k = 0; k < 4; k++)
+                {
+                    int kk = k;
+                    var b = HudStyle.MakeButton(Plan.SideNames[k].Substring(0, 1), () => world.UpdateDoor(di, d.kind, kk, Plan.WallLen(world.Site, kk) / 2), 40);
+                    HudStyle.SetOn(b, d.side == k);
+                    walls.Add(b);
+                }
+                siteBox.Add(walls);
+                var posF = MakeField(d.pos.ToString("0.#", CultureInfo.InvariantCulture), 90);
+                posF.RegisterValueChangedCallback(ev => world.UpdateDoor(di, d.kind, d.side, ParseF(ev.newValue, d.pos)));
+                siteBox.Add(FieldRow("위치 (m)", $"{Plan.SideNames[d.side]} 벽 모서리부터, 0 – {Plan.WallLen(s, d.side):0}", posF));
+                var acts = Row(); HudStyle.Margin(acts, 6, 0, 0, 0);
+                var back = HudStyle.MakeButton("건물 속성", () => world.SelectBuilding());
+                var del = HudStyle.MakeButton("문 삭제", () => world.RemoveDoor(di)); del.style.color = HudStyle.Rec;
+                acts.Add(back); acts.Add(del);
+                siteBox.Add(acts);
+                return;
+            }
+
+            siteBox.Add(SectionTitle("건물"));
+            var fx = MakeField(s.x.ToString("0.#", CultureInfo.InvariantCulture), 90);
+            var fz = MakeField(s.z.ToString("0.#", CultureInfo.InvariantCulture), 90);
+            var fw = MakeField(s.w.ToString("0.#", CultureInfo.InvariantCulture), 90);
+            var fd = MakeField(s.d.ToString("0.#", CultureInfo.InvariantCulture), 90);
+            var fh = MakeField(s.h.ToString("0.0#", CultureInfo.InvariantCulture), 90);
+            siteBox.Add(FieldRow("위치 X (m)", "남서쪽 모서리", fx));
+            siteBox.Add(FieldRow("위치 Z (m)", null, fz));
+            siteBox.Add(FieldRow("폭 (m)", "동서 길이, 20 m 이상", fw));
+            siteBox.Add(FieldRow("깊이 (m)", "남북 길이, 20 m 이상", fd));
+            siteBox.Add(FieldRow("바닥 높이 (m)", "트럭 적재함 높이, 보통 1.1 – 1.3 m", fh));
+            var apply = Row(); apply.style.justifyContent = Justify.FlexEnd; HudStyle.Margin(apply, 2, 0, 0, 0);
+            var redraw = HudStyle.MakeButton("영역 다시 그리기", () => world.BeginSiteDrawing());
+            var ok = HudStyle.MakeButton("적용", () =>
+            {
+                var n = world.Site.Clone();
+                n.x = Mathf.Round(ParseF(fx.value, n.x)); n.z = Mathf.Round(ParseF(fz.value, n.z));
+                n.w = Mathf.Round(ParseF(fw.value, n.w)); n.d = Mathf.Round(ParseF(fd.value, n.d));
+                n.h = ParseF(fh.value, n.h);
+                world.ApplySite(n, true);
+                RebuildSiteBox();
+            });
+            HudStyle.SetOn(ok, true);
+            apply.Add(redraw); apply.Add(ok);
+            siteBox.Add(apply);
+
+            siteBox.Add(SectionTitle("출입문"));
+            int nIn = 0, nOut = 0; foreach (var d in s.doors) { if (d.kind == 0) nIn++; else nOut++; }
+            siteBox.Add(Stepper("입고문 수", nIn, v => world.SetDoorCount(0, v)));
+            siteBox.Add(Stepper("출고문 수", nOut, v => world.SetDoorCount(1, v)));
+            var hint = HudStyle.MakeLabel("문은 장면에서 끌어 벽을 따라 옮길 수 있습니다. 문을 클릭하면 종류·벽·위치를 바꿀 수 있습니다.", 11, HudStyle.Muted);
+            hint.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(hint, 2, 0, 8, 0);
+            siteBox.Add(hint);
+            for (int i = 0; i < s.doors.Count; i++)
+            {
+                int ii = i; var d = s.doors[i];
+                var row = Row(); row.pickingMode = PickingMode.Position;
+                HudStyle.Pad(row, 6, 10); HudStyle.Radius(row, 8); HudStyle.Margin(row, 0, 0, 2, 0);
+                var dot = new VisualElement { pickingMode = PickingMode.Ignore };
+                dot.style.width = 8; dot.style.height = 8; HudStyle.Radius(dot, 4); HudStyle.Margin(dot, 0, 8, 0, 0);
+                dot.style.backgroundColor = d.kind == 0 ? FloorPlan.InCol : FloorPlan.OutCol;
+                var n = HudStyle.MakeLabel(Plan.DoorName(s, i), 12, HudStyle.Text); n.style.flexGrow = 1;
+                var v = HudStyle.MakeLabel($"{Plan.SideNames[d.side]} {d.pos:0.#} m", 11, HudStyle.Muted);
+                row.Add(dot); row.Add(n); row.Add(v);
+                row.RegisterCallback<PointerEnterEvent>(_ => row.style.backgroundColor = HudStyle.TileHover);
+                row.RegisterCallback<PointerLeaveEvent>(_ => row.style.backgroundColor = Color.clear);
+                row.RegisterCallback<ClickEvent>(_ => world.SelectDoor(ii));
+                siteBox.Add(row);
+            }
+        }
+
+        // ---------------------------------------------------------------- 화물 선택
+        void RefreshCards()
+        {
+            foreach (var kv in cards)
+            {
+                bool ok = !LayoutMode || world == null || world.CanHandle(kv.Key);
+                kv.Value.style.opacity = ok ? 1f : 0.4f;
+                var cg = kv.Value.Q<Label>("cargo");
+                if (cg != null) cg.style.color = ok ? HudStyle.Muted : HudStyle.Bad;
+            }
+            if (cargoChip != null && world != null) cargoChip.text = $"화물: {CargoInfo.Short(world.Cargo)}  ▾";
+        }
+
+        void BuildCargoModal()
+        {
+            cargoModal = new VisualElement();
+            cargoModal.style.position = Position.Absolute; cargoModal.style.left = 0; cargoModal.style.right = 0; cargoModal.style.top = 0; cargoModal.style.bottom = 0;
+            cargoModal.style.backgroundColor = new Color(0, 0, 0, HudStyle.Dark ? 0.55f : 0.30f);
+            cargoModal.style.alignItems = Align.Center; cargoModal.style.justifyContent = Justify.Center;
+            cargoModal.RegisterCallback<PointerEnterEvent>(_ => { overModal = true; UpdOver(); });
+            cargoModal.RegisterCallback<PointerLeaveEvent>(_ => { overModal = false; UpdOver(); });
+
+            var card = new VisualElement();
+            card.style.backgroundColor = HudStyle.Dark ? new Color(0.09f, 0.10f, 0.12f, 0.98f) : new Color(1, 1, 1, 0.99f);
+            HudStyle.Radius(card, 18); HudStyle.Pad(card, 26, 28); card.style.maxWidth = 920;
+            var t = HudStyle.MakeLabel("어떤 화물을 다루는 물류센터인가요?", 22, HudStyle.Strong, true);
+            var st = HudStyle.MakeLabel("화물에 맞는 설비만 설치할 수 있습니다. 입고·출고 도크와 동선도 이 화물 기준으로 표시됩니다. 나중에 위쪽 막대의 화물 단추로 바꿀 수 있습니다.", 13, HudStyle.Muted);
+            st.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(st, 6, 0, 18, 0);
+            card.Add(t); card.Add(st);
+            cargoTiles = new VisualElement { pickingMode = PickingMode.Ignore };
+            cargoTiles.style.flexDirection = FlexDirection.Row; cargoTiles.style.flexWrap = Wrap.Wrap;
+            card.Add(cargoTiles);
+            var btns = Row(); btns.style.justifyContent = Justify.FlexEnd; HudStyle.Margin(btns, 18, 0, 0, 0);
+            var go = HudStyle.MakeButton("이 화물로 시작", () =>
+            {
+                world?.SetCargo(modalPick);
+                HideCargoModal();
+                if (modalStartFlow && world != null) world.BeginSiteDrawing();   // 다음 단계: 물류센터 영역 그리기
+            }, 140);
+            go.style.height = 38; HudStyle.SetOn(go, true);
+            btns.Add(go);
+            card.Add(btns);
+            cargoModal.Add(card);
+            cargoModal.style.display = DisplayStyle.None;
+            root.Add(cargoModal);
+        }
+
+        void RebuildCargoTiles()
+        {
+            cargoTiles.Clear();
+            foreach (var k in CargoInfo.All)
+            {
+                var kk = k;
+                bool on = k == modalPick;
+                var tile = new VisualElement();
+                tile.style.width = 200; HudStyle.Pad(tile, 16, 14); HudStyle.Margin(tile, 0, 10, 10, 0); HudStyle.Radius(tile, 14);
+                tile.style.backgroundColor = on ? HudStyle.AccentDim : HudStyle.Tile;
+                HudStyle.Border(tile, 2, on ? HudStyle.Accent : Color.clear);
+                tile.Add(new CargoIcon(k, 56));
+                var n = HudStyle.MakeLabel(CargoInfo.Name(k) + (k == CargoKind.Pallet ? "  (기본)" : ""), 15, HudStyle.Strong, true); HudStyle.Margin(n, 10, 0, 0, 0);
+                var d = HudStyle.MakeLabel(CargoInfo.Desc(k), 11, HudStyle.Muted); d.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(d, 4, 0, 0, 0);
+                var names = new List<string>();
+                foreach (var e in EquipCatalog.All) if (e.Handles(k)) names.Add(e.name);
+                var eq = HudStyle.MakeLabel("처리 설비: " + (names.Count > 0 ? string.Join(", ", names) : "없음"), 11, HudStyle.Text);
+                eq.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(eq, 8, 0, 0, 0);
+                tile.Add(n); tile.Add(d); tile.Add(eq);
+                tile.RegisterCallback<PointerEnterEvent>(_ => { if (kk != modalPick) tile.style.backgroundColor = HudStyle.TileHover; });
+                tile.RegisterCallback<PointerLeaveEvent>(_ => { if (kk != modalPick) tile.style.backgroundColor = HudStyle.Tile; });
+                tile.RegisterCallback<ClickEvent>(_ => { modalPick = kk; RebuildCargoTiles(); });
+                cargoTiles.Add(tile);
+            }
+        }
+
+        void ShowCargoModal() => ShowCargoModal(false);
+
+        void ShowCargoModal(bool startFlow)
+        {
+            modalStartFlow = startFlow;
+            cargoAsked = true;
+            if (cargoModal == null || !LayoutMode || world == null) return;
+            modalPick = world.Cargo;
+            RebuildCargoTiles();
+            cargoModal.style.display = DisplayStyle.Flex;
+            overModal = true; UpdOver();
+        }
+
+        void HideCargoModal()
+        {
+            if (cargoModal == null) return;
+            cargoModal.style.display = DisplayStyle.None;
+            overModal = false; UpdOver();
+            RefreshCards();
+        }
+
+        // 장면 위에 떠 있는 이름표: 입고·출고 지점, 출입문, 건물 크기
+        readonly List<Label> tags = new List<Label>();
+        int tagUsed;
+
+        void BuildDockLabels() { tags.Clear(); }
+
+        void UpdateDockLabels()
+        {
+            tagUsed = 0;
+            var cam = Camera.main;
+            if (LayoutMode && world != null && cam != null && root.panel != null && hudVisible)
+            {
+                var s = world.Site;
+                var inC = FloorPlan.InCol; inC.a = 0.92f; var outC = FloorPlan.OutCol; outC.a = 0.92f;
+                Tag(cam, new Vector3(Plan.InPoint.x, 2.5f, Plan.InPoint.y), $"입고 지점 · {CargoInfo.Short(world.Cargo)}", inC, 12);
+                Tag(cam, new Vector3(Plan.OutPoint.x, 2.5f, Plan.OutPoint.y), "출고 지점", outC, 12);
+                for (int i = 0; i < s.doors.Count; i++)
+                {
+                    var d = s.doors[i];
+                    var p = Plan.DoorPoint(s, d) + Plan.Outward(d.side) * 2.5f;
+                    var c = d.kind == 0 ? inC : outC;
+                    if (i == world.SelectedDoor) c = HudStyle.Accent;
+                    Tag(cam, new Vector3(p.x, s.h + 1.6f, p.y), Plan.DoorName(s, i), c, 11);
+                }
+                var top = new Vector3(s.x + s.w / 2, 0.5f, s.z - 6f);
+                Tag(cam, top, $"{s.w:0} × {s.d:0} m  ·  바닥 높이 {s.h:0.0#} m", new Color(0.2f, 0.22f, 0.26f, 0.85f), 11);
+            }
+            for (int i = tagUsed; i < tags.Count; i++) tags[i].style.display = DisplayStyle.None;
+        }
+
+        void Tag(Camera cam, Vector3 w3, string text, Color bg, float size)
+        {
+            if (Vector3.Dot(cam.transform.forward, w3 - cam.transform.position) <= 0) return;
+            if (tagUsed >= tags.Count)
+            {
+                var nl = HudStyle.MakeLabel("", 12, Color.white, true);
+                nl.style.position = Position.Absolute; HudStyle.Pad(nl, 3, 9); HudStyle.Radius(nl, 9);
+                nl.style.whiteSpace = WhiteSpace.NoWrap;
+                root.Insert(0, nl);   // 패널 아래에 깔리도록 맨 앞
+                tags.Add(nl);
+            }
+            var l = tags[tagUsed++];
+            var p = RuntimePanelUtils.CameraTransformWorldToPanel(root.panel, w3, cam);
+            if (l.text != text) l.text = text;
+            l.style.fontSize = size; l.style.backgroundColor = bg;
+            l.style.display = DisplayStyle.Flex;
+            l.style.left = p.x; l.style.top = p.y;
+            l.style.translate = new Translate(Length.Percent(-50), Length.Percent(-50));
+        }
 
         void Toast(string msg)
         {
