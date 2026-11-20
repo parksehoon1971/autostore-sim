@@ -33,36 +33,25 @@ namespace StackerCrane.EditorTools
             if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) EditorSceneManager.OpenScene(ScenePath);
         }
 
-        [MenuItem("애니메이션/스태커크레인/Record 30s Movie (MP4, 1920x1080)", priority = 20)]
-        public static void Record()
+        [MenuItem("애니메이션/스태커크레인/Record 30s Movie (FHD 1920x1080, 2x 슈퍼샘플링)", priority = 20)]
+        public static void Record() { StartRecording(1080); }
+
+        [MenuItem("애니메이션/스태커크레인/Record 30s Movie (4K 3840x2160)", priority = 21)]
+        public static void Record4K() { StartRecording(2160); }
+
+        static void StartRecording(int height)
         {
             if (EditorApplication.isPlaying) { Debug.LogWarning("플레이 모드를 먼저 종료하세요."); return; }
             OpenScene();
             SessionState.SetBool(StackerCraneMovieCapture.SessionKey, true);
+            SessionState.SetInt(StackerCraneMovieCapture.SessionHeightKey, height);
             EditorApplication.isPlaying = true;
         }
 
-        [MenuItem("애니메이션/스태커크레인/Open Recordings Folder", priority = 21)]
+        [MenuItem("애니메이션/스태커크레인/Open Recordings Folder", priority = 22)]
         public static void OpenRecordings()
         {
             var p = Path.GetFullPath("Recordings"); Directory.CreateDirectory(p); EditorUtility.RevealInFinder(p);
-        }
-    }
-
-    // FBX 가져오기 설정 (Blender 출력)
-    public class StackerCraneModelImporter : AssetPostprocessor
-    {
-        // 버전을 올리면 Unity 가 모델을 다시 가져옵니다 (Read/Write 켜기: 겹친 면 자동 보정이 메쉬를 읽어야 함)
-        public override uint GetVersion() => 2;
-
-        void OnPreprocessModel()
-        {
-            if (!assetPath.Contains("StackerCrane/Resources/StackerCraneModels")) return;
-            var mi = (ModelImporter)assetImporter;
-            mi.importCameras = false; mi.importLights = false; mi.isReadable = true; mi.importAnimation = false;
-            mi.animationType = ModelImporterAnimationType.None;
-            mi.materialImportMode = ModelImporterMaterialImportMode.ImportViaMaterialDescription;
-            mi.bakeAxisConversion = true;
         }
     }
 }

@@ -1,7 +1,7 @@
 // 팔레트용 스태커크레인 (단위 하중 AS/RS): 시뮬레이션 실행 + 사실적 URP 장면 자동 구성 + 장비명 자막 + HUD
 // 빈 씬에 이 컴포넌트 하나만 있으면 건물/랙/레일/컨베이어/크레인/팔레트/조명/후처리/카메라를 코드로 만듭니다.
-// 모델: Assets/StackerCrane/Resources/StackerCraneModels/stackercrane_crane.fbx, stackercrane_pallet_v0~3.fbx
-//       (blender/stackercrane_blender.py 출력). 없으면 기본 도형 사용.
+// 크레인·팔레트도 코드로 만듭니다 (blender/stackercrane_blender.py 의 make_crane / make_pallets 와 같은 치수).
+// Blender FBX 는 blender/out/stackercrane/ 에 있지만 Unity 에서는 쓰지 않습니다 (빈 오브젝트 계층 축 변환 문제).
 // 좌표: 시뮬레이션 (x, y, z-up) → Unity (x, z, y). 치수는 blender/stackercrane_blender.py 와 같은 값.
 using System.Collections.Generic;
 using UnityEngine;
@@ -254,24 +254,6 @@ namespace StackerCrane
                 m.SetTexture("_MetallicGlossMap", mg); m.EnableKeyword("_METALLICSPECGLOSSMAP");
                 return m;
             }
-
-            // FBX 에서 가져온 재질을 이름으로 URP 재질로 교체 (가장 긴 이름이 맞는 것)
-            public void Remap(GameObject go)
-            {
-                foreach (var r in go.GetComponentsInChildren<Renderer>())
-                {
-                    var arr = r.sharedMaterials;
-                    for (int i = 0; i < arr.Length; i++)
-                    {
-                        if (arr[i] == null) continue;
-                        string n = arr[i].name; Material best = null; int bl = -1;
-                        foreach (var kv in byName)
-                            if (n.StartsWith(kv.Key) && kv.Key.Length > bl) { best = kv.Value; bl = kv.Key.Length; }
-                        if (best != null) arr[i] = best;
-                    }
-                    r.sharedMaterials = arr;
-                }
-            }
         }
 
         // ------------------------------------------------------------------ 메쉬 묶음 (재질별로 합쳐 드로우콜 절감)
@@ -366,7 +348,7 @@ namespace StackerCrane
             var pg = new GameObject("ReflectionProbe"); pg.transform.position = U(cxw, cyw, 8f);
             var probe = pg.AddComponent<ReflectionProbe>();
             probe.mode = ReflectionProbeMode.Realtime; probe.refreshMode = ReflectionProbeRefreshMode.ViaScripting;
-            probe.size = new Vector3(SX, Hh * 2, SY); probe.resolution = 256; probe.hdr = true;
+            probe.size = new Vector3(SX, Hh * 2, SY); probe.resolution = 512; probe.hdr = true;
         }
 
         // ------------------------------------------------------------------ 랙 + 레일 (blender make_racks 와 같은 형상)
@@ -428,13 +410,14 @@ namespace StackerCrane
                     R.B(0.30f, 0.40f, 0.55f, xe + s * 0.15f, ya, 0.275f, M.safetyYellow);
                     R.B(0.15f, 0.25f, 0.25f, xe - s * 0.07f, ya, 0.50f, M.black);
                 }
-                foreach (float xg in new[] { RailX0 + 0.3f })
-                {
-                    for (int sy = -1; sy <= 1; sy += 2) R.B(0.20f, 0.20f, zt + 0.9f, xg, ya + sy * (aw / 2 + 0.12f), (zt + 0.9f) / 2, M.upright);
-                    R.B(0.22f, aw + 0.5f, 0.20f, xg, ya, zt + 0.85f, M.upright);
-                }
                 R.B(-RailX0, 0.06f, 0.20f, RailX0 / 2, ya, zt + 0.65f, M.railSteel);
                 R.B(0.02f, 0.30f, 0.30f, RailX0 - 0.35f, ya + 0.20f, 0.82f, M.white);
+            }
+            // 앞쪽 상부 레일 지지 문형 프레임: 랙 바로 앞, 기둥은 난간 바깥 (컨베이어 팔레트·카메라 동선과 겹치지 않게)
+            {
+                float xg = -0.45f, ya0 = -1.1f, ya1 = Depth + 1.1f, hz = zt + 1.0f;   // 난간(y=-0.8, Depth+0.8) 바깥
+                foreach (float yp in new[] { ya0, ya1 }) R.B(0.25f, 0.25f, hz, xg, yp, hz / 2, M.upright);
+                R.B(0.24f, ya1 - ya0 + 0.25f, 0.22f, xg, (ya0 + ya1) / 2, zt + 0.865f, M.upright);
             }
             R.Build("Rails", root);
         }
@@ -522,134 +505,187 @@ namespace StackerCrane
             b.Build("FloorMarks", null);
         }
 
-        // ------------------------------------------------------------------ 크레인
+        // ------------------------------------------------------------------ 크레인 (코드로 직접 구성: blender make_crane 과 같은 형상)
+        // FBX 를 쓰지 않는 이유: 빈 오브젝트(승강대·포크) 계층의 축 변환이 가져오기 설정에 따라 달라져 승강대가 뒤집혀 보였음
         void BuildCranes()
         {
             var parent = new GameObject("Cranes").transform;
-            var prefab = Resources.Load<GameObject>("StackerCraneModels/stackercrane_crane");
             foreach (var cr in Sim.cranes)
             {
                 var root = new GameObject("Crane_" + cr.id).transform; root.SetParent(parent, false);
-                Transform car = null, mid = null, top = null;
-                if (prefab)
-                {
-                    var go = Instantiate(prefab, root, false);
-                    go.transform.localPosition = Vector3.zero;
-                    M.Remap(go);
-                    FitScale(go, TopZ + 0.62f);
-                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
-                    foreach (var t in go.GetComponentsInChildren<Transform>())
-                    {
-                        if (t.name.StartsWith("Carriage") && !t.name.StartsWith("CarriageBody")) car = t;
-                        else if (t.name.StartsWith("ForkMid")) mid = t;
-                        else if (t.name.StartsWith("ForkTop")) top = t;
-                    }
-                    // 축 변환으로 모델이 세로축으로 180° 돌아 들어왔으면 (마스트가 -x 쪽) 바로잡음
-                    var frame = go.GetComponentsInChildren<Renderer>();
-                    foreach (var r in frame)
-                        if (r.name.StartsWith("Frame") && r.bounds.center.x < root.position.x) { go.transform.localRotation = Quaternion.Euler(0, 180, 0); break; }
-                }
-                if (car == null || mid == null || top == null) { car = FallbackCrane(root, out mid, out top); }
-                // 포크 단은 승강대 아래로 옮겨 두고 월드 좌표로 움직임
+                var car = BuildCrane(root, out var mid, out var top);
                 craneT.Add(root); carT.Add(car); midT.Add(mid); topT.Add(top);
             }
         }
 
-        // 기본 도형 크레인 (FBX 가 없을 때)
-        Transform FallbackCrane(Transform root, out Transform mid, out Transform top)
+        // 원점 = 통로 중심 바닥, 승강대 가운데가 x = 0, 마스트는 +x 쪽. 승강대 원점 = 포크 윗면 (z 위가 Unity +Y)
+        Transform BuildCrane(Transform root, out Transform mid, out Transform top)
         {
             float zt = TopZ;
-            var f = new Batch(cubeMesh, cylMesh);
-            f.B(BaseX1 - BaseX0, 2 * BaseY, BaseZ1 - BaseZ0, (BaseX0 + BaseX1) / 2, 0, (BaseZ0 + BaseZ1) / 2, M.yellow);
-            foreach (float wx in new[] { -0.42f, 1.98f }) f.Cyl(0.18f, 0.09f, wx, 0, 0.30f, 'Y', M.poly);
-            f.B(MastX1 - MastX0, 2 * MastY, zt + 0.2f - BaseZ1, (MastX0 + MastX1) / 2, 0, (BaseZ1 + zt + 0.2f) / 2, M.yellow);
-            f.B(1.30f, 0.60f, 0.22f, 1.15f, 0, zt + 0.31f, M.yellow);
-            f.B(0.62f, 0.34f, 1.65f, 1.93f, BaseY - 0.12f, BaseZ1 + 1.30f, M.cabinet);
-            f.Build("Frame", root);
-            var car = new GameObject("Carriage").transform; car.SetParent(root, false);
-            var k = new Batch(cubeMesh, cylMesh);
-            k.B(1.24f, 1.00f, 0.13f, 0, 0, -0.175f, M.grey);
+            var F = new Batch(cubeMesh, cylMesh);
+            // 하부 주행대 + 차륜 + 수평 안내 롤러 + 범퍼 + 주행 모터
+            F.B(BaseX1 - BaseX0, 2 * BaseY, BaseZ1 - BaseZ0, (BaseX0 + BaseX1) / 2, 0, (BaseZ0 + BaseZ1) / 2, M.yellow);
+            F.B(BaseX1 - BaseX0 - 0.3f, 2 * BaseY + 0.004f, 0.06f, (BaseX0 + BaseX1) / 2, 0, BaseZ1 - 0.12f, M.grey);
+            foreach (float wx in new[] { -0.42f, 1.98f })
+            {
+                F.Cyl(0.18f, 0.09f, wx, 0, 0.30f, 'Y', M.poly);
+                F.Cyl(0.07f, 0.10f, wx, 0, 0.30f, 'Y', M.hub);
+                float gx = wx + (wx < 0 ? 0.28f : -0.28f);
+                for (int sy = -1; sy <= 1; sy += 2)
+                {
+                    F.Cyl(0.04f, 0.05f, gx, sy * 0.075f, 0.10f, 'Z', M.poly);
+                    F.B(0.10f, 0.03f, 0.18f, gx, sy * 0.12f, 0.21f, M.grey);
+                }
+            }
+            for (int q = 0; q < 2; q++)
+            {
+                float xb = q == 0 ? BaseX0 : BaseX1, s = q == 0 ? -1f : 1f;
+                F.B(0.16f, 0.36f, 0.22f, xb + s * 0.08f, 0, 0.50f, M.black);
+                F.B(0.012f, 0.30f, 0.10f, xb + s * 0.165f, 0, 0.50f, M.hazard);
+            }
+            F.B(0.36f, 0.30f, 0.30f, 1.98f, -BaseY - 0.15f, 0.48f, M.grey);
+            F.Cyl(0.13f, 0.36f, 1.98f, -BaseY - 0.15f, 0.82f, 'Z', M.grey);
+            F.B(0.10f, 0.12f, 0.12f, BaseX0 - 0.06f, 0.20f, 0.82f, M.black);
+            F.B(0.004f, 0.06f, 0.06f, BaseX0 - 0.112f, 0.20f, 0.82f, M.lens);
+            // 마스트 + 안내 레일 + 승강 와이어 + 이음 플랜지
+            float mz0 = BaseZ1, mz1 = zt + 0.20f, mx = (MastX0 + MastX1) / 2;
+            F.B(MastX1 - MastX0, 2 * MastY, mz1 - mz0, mx, 0, (mz0 + mz1) / 2, M.yellow);
             for (int sy = -1; sy <= 1; sy += 2)
             {
-                k.B(0.18f, 0.12f, 1.80f, 0.71f, sy * 0.40f, 0.66f, M.grey);
-                k.B(0.05f, 0.05f, 1.70f, -0.60f, sy * 0.47f, 0.74f, M.grey);
-                k.B(1.24f, 0.05f, 0.06f, 0, sy * 0.47f, 1.62f, M.grey);
+                F.B(0.035f, 0.05f, mz1 - mz0 - 0.3f, MastX0 - 0.012f, sy * (MastY - 0.06f), (mz0 + mz1) / 2 + 0.1f, M.railSteel);
+                F.B(0.012f, 0.012f, mz1 - mz0 - 0.4f, MastX0 - 0.07f, sy * 0.10f, (mz0 + mz1) / 2 + 0.1f, M.chain);
             }
-            foreach (int sx in new[] { -1, 1 }) k.B(0.14f, 1.15f, 0.035f, sx * ForkX, 0, -0.0925f, M.fork);
-            k.Build("CarriageBody", car);
+            for (int k = 0; k < (int)((mz1 - mz0) / 2.5f); k++)
+                F.B(MastX1 - MastX0 + 0.02f, 2 * MastY + 0.02f, 0.03f, mx, 0, mz0 + 2.5f * (k + 1), M.yellow);
+            // 승강 드럼·모터, 제어반
+            F.Cyl(0.22f, 0.34f, 1.88f, -0.14f, 0.95f, 'Y', M.grey);
+            F.B(0.36f, 0.26f, 0.34f, 1.88f, 0.18f, 0.92f, M.grey);
+            F.Cyl(0.14f, 0.30f, 1.88f, 0.18f, 1.27f, 'Z', M.motor);
+            F.B(0.62f, 0.34f, 1.65f, 1.93f, BaseY - 0.12f, BaseZ1 + 1.30f, M.cabinet);
+            F.B(0.003f, 0.24f, 0.30f, 1.93f - 0.312f, BaseY - 0.12f, BaseZ1 + 1.95f, M.black);
+            F.B(0.003f, 0.05f, 0.02f, 1.93f - 0.314f, BaseY - 0.06f, BaseZ1 + 1.70f, M.ledGreen);
+            F.B(0.003f, 0.05f, 0.02f, 1.93f - 0.314f, BaseY - 0.18f, BaseZ1 + 1.70f, M.ledAmber);
+            // 사다리 (-y 면)
+            float ly = -MastY - 0.05f;
+            foreach (float xr in new[] { MastX0 + 0.08f, MastX1 - 0.08f }) F.B(0.04f, 0.03f, mz1 - mz0 - 1.0f, xr, ly, (mz0 + mz1) / 2 + 0.3f, M.galv);
+            for (float z = mz0 + 1.0f; z < mz1 - 0.3f; z += 0.3f) F.B(MastX1 - MastX0 - 0.16f, 0.025f, 0.025f, mx, ly, z, M.galv);
+            // 상부 주행대 + 안내 롤러 + 경광등
+            F.B(1.30f, 0.60f, 0.22f, 1.15f, 0, zt + 0.31f, M.yellow);
+            foreach (float xr in new[] { 0.65f, 1.65f })
+                for (int sy = -1; sy <= 1; sy += 2)
+                {
+                    F.Cyl(0.05f, 0.06f, xr, sy * 0.085f, zt + 0.48f, 'Z', M.poly);
+                    F.B(0.12f, 0.04f, 0.05f, xr, sy * 0.12f, zt + 0.445f, M.grey);
+                }
+            F.Cyl(0.05f, 0.10f, 1.55f, -0.20f, zt + 0.47f, 'Z', M.black);
+            F.Cyl(0.045f, 0.08f, 1.55f, -0.20f, zt + 0.56f, 'Z', M.ledAmber);
+            F.Build("Frame", root);
+
+            // 승강대: 바닥판이 포크 아래(-z), 프레임·헤드 가드가 위(+z)
+            var car = new GameObject("Carriage").transform; car.SetParent(root, false);
+            var K = new Batch(cubeMesh, cylMesh);
+            K.B(1.24f, 1.00f, 0.13f, 0, 0, -0.175f, M.grey);
+            for (int sy = -1; sy <= 1; sy += 2)
+            {
+                K.B(0.18f, 0.12f, 1.80f, 0.71f, sy * 0.40f, -0.24f + 0.90f, M.grey);
+                foreach (float zr in new[] { -0.05f, 1.35f }) K.Cyl(0.05f, 0.05f, MastX0 - 0.06f, sy * (MastY - 0.06f), zr, 'X', M.poly);
+                K.B(0.05f, 0.05f, 1.70f, -0.60f, sy * 0.47f, -0.11f + 0.85f, M.grey);
+                K.B(1.24f, 0.05f, 0.06f, 0, sy * 0.47f, 1.62f, M.grey);
+                K.B(1.20f, 0.006f, 0.05f, 0, sy * 0.503f, -0.15f, M.hazard);
+                K.B(0.04f, 0.04f, 0.06f, -0.55f, sy * 0.47f, -0.08f, M.black);
+            }
+            foreach (float zc in new[] { 0.25f, 0.85f, 1.45f }) K.B(0.14f, 0.70f, 0.10f, 0.73f, 0, zc, M.grey);
+            K.B(0.06f, 0.10f, 1.40f, 0.76f, -0.18f, 0.75f, M.chain);
+            K.B(0.05f, 0.99f, 0.06f, -0.60f, 0, 1.62f, M.grey);
+            K.B(0.05f, 0.99f, 0.06f, 0.60f, 0, 1.62f, M.grey);
+            foreach (int sx in new[] { -1, 1 })
+            {
+                K.B(0.14f, 1.15f, 0.035f, sx * ForkX, 0, -0.0925f, M.fork);
+                K.B(0.16f, 0.30f, 0.06f, sx * ForkX, 0, -0.14f, M.chain);
+            }
+            K.B(0.12f, 0.10f, 0.06f, 0.71f, 0, 1.12f, M.black);
+            K.B(0.004f, 0.06f, 0.03f, 0.618f, 0, 1.12f, M.ledGreen);
+            K.Build("CarriageBody", car);
             var m = new Batch(cubeMesh, cylMesh);
             foreach (int sx in new[] { -1, 1 }) m.B(0.12f, 1.10f, 0.040f, sx * ForkX, 0, -0.055f, M.fork);
             mid = m.Build("ForkMid", car);
             var t = new Batch(cubeMesh, cylMesh);
-            foreach (int sx in new[] { -1, 1 }) t.B(0.10f, 1.15f, 0.035f, sx * ForkX, 0, -0.0175f, M.fork);
+            foreach (int sx in new[] { -1, 1 })
+            {
+                t.B(0.10f, 1.15f, 0.035f, sx * ForkX, 0, -0.0175f, M.fork);
+                for (int sy = -1; sy <= 1; sy += 2) t.B(0.10f, 0.02f, 0.012f, sx * ForkX, sy * 0.58f, -0.006f, M.black);
+            }
             top = t.Build("ForkTop", car);
             return car;
         }
 
-        // 단위가 어긋나면 크기 보정 (FBX 축 변환은 임포터의 bakeAxisConversion 이 처리)
-        static void FitScale(GameObject go, float targetH)
-        {
-            var rs = go.GetComponentsInChildren<Renderer>(); if (rs.Length == 0) return;
-            var bb = rs[0].bounds; foreach (var x in rs) bb.Encapsulate(x.bounds);
-            float sc = targetH / Mathf.Max(1e-4f, bb.size.y);
-            if (sc < 0.8f || sc > 1.25f) go.transform.localScale *= sc;
-        }
-
-        // ------------------------------------------------------------------ 팔레트
+        // ------------------------------------------------------------------ 팔레트 (코드로 직접 구성: blender make_pallets 와 같은 4종)
         void BuildPallets()
         {
             var parent = new GameObject("Pallets").transform;
             var holder = new GameObject("PalletTemplates").transform; holder.gameObject.SetActive(false);
             var tpl = new List<GameObject>();
-            for (int v = 0; v < 4; v++)
-            {
-                var pf = Resources.Load<GameObject>("StackerCraneModels/stackercrane_pallet_v" + v);
-                GameObject go;
-                if (pf)
-                {
-                    go = new GameObject("PalletTpl_" + v); go.transform.SetParent(holder, false);
-                    var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
-                    M.Remap(m); FitScale(m, (float)config.palletH + 1.0f);
-                    EquipFX.MeshFix.ResolveModel(m);   // 모델 안 겹친 면 분리 (깜빡임 방지)
-                }
-                else go = FallbackPallet(v, holder);
-                tpl.Add(go);
-            }
+            for (int v = 0; v < 4; v++) tpl.Add(MakePallet(v, holder));
             for (int id = 0; id < Sim.pal.Count; id++)
             {
                 var p = Sim.pal[id];
                 var go = Instantiate(tpl[p.variant], parent, false); go.name = "Pallet_" + id;
-                // 적재물 높이: Load 자식을 세로로 늘림 (월드 높이로 확인)
-                foreach (var t in go.GetComponentsInChildren<Transform>(true))
-                    if (t.name.StartsWith("Load"))
-                    {
-                        var r = t.GetComponentInChildren<Renderer>();
-                        float h0 = r ? r.bounds.size.y : 1f;
-                        var s = t.localScale; t.localScale = new Vector3(s.x, s.y * (float)p.load, s.z);
-                        if (r && Mathf.Abs(r.bounds.size.y - h0) < 1e-3f && Mathf.Abs((float)p.load - 1f) > 0.01f)
-                            t.localScale = new Vector3(s.x, s.y, s.z * (float)p.load);   // 로컬 z 가 위쪽인 경우
-                        break;
-                    }
+                var load = go.transform.Find("Load");
+                if (load) load.localScale = new Vector3(1, (float)p.load, 1);   // 적재물 높이 (기준 1.0 m)
                 palT.Add(go.transform);
             }
         }
 
-        GameObject FallbackPallet(int v, Transform holder)
+        GameObject MakePallet(int v, Transform holder)
         {
             var go = new GameObject("PalletTpl_" + v); go.transform.SetParent(holder, false);
             var d = new Batch(cubeMesh, cylMesh);
-            foreach (float x in new[] { -0.44f, -0.22f, 0f, 0.22f, 0.44f }) d.B(0.11f, 1.20f, 0.022f, x, 0, 0.133f, M.wood);
+            foreach (float x in new[] { -0.44f, -0.22f, 0f, 0.22f, 0.44f }) d.B(Mathf.Abs(x) == 0.22f ? 0.10f : 0.12f, 1.20f, 0.022f, x, 0, 0.133f, M.wood);
             foreach (float y in new[] { -0.55f, 0f, 0.55f }) d.B(1.00f, 0.10f, 0.022f, 0, y, 0.111f, M.wood);
             foreach (float x in new[] { -0.45f, 0f, 0.45f })
             {
-                foreach (float y in new[] { -0.55f, 0f, 0.55f }) d.B(0.10f, 0.10f, 0.078f, x, y, 0.061f, M.woodDark);
+                foreach (float y in new[] { -0.55f, 0f, 0.55f }) d.B(0.10f, y == 0 ? 0.14f : 0.10f, 0.078f, x, y, 0.061f, M.woodDark);
                 d.B(0.10f, 1.20f, 0.022f, x, 0, 0.011f, M.wood);
             }
-            d.Build("Deck_v" + v, go.transform);
-            var l = new Batch(cubeMesh, cylMesh);
-            var mat = v == 0 ? M.cardboard : v == 1 ? M.cardboardWhite : v == 2 ? M.drum : M.bag;
-            l.B(0.98f, 1.18f, 1.0f, 0, 0, 0.5f, mat);
-            var lt = l.Build("Load_v" + v, go.transform);
+            d.Build("Deck", go.transform);
+            // 적재물: 높이 1.0 m 기준 (Load 를 세로로 늘려 맞춤). 원점 = 팔레트 윗면
+            var L = new Batch(cubeMesh, cylMesh); const float H = 1.0f;
+            if (v == 0 || v == 1)
+            {
+                var mat = v == 0 ? M.cardboard : M.cardboardWhite; int nz = v == 0 ? 4 : 5; float h = H / nz;
+                for (int k = 0; k < nz; k++)
+                    foreach (int ix in new[] { -1, 1 })
+                        foreach (int iy in new[] { -1, 0, 1 })
+                        {
+                            L.B(0.48f, 0.385f, h - 0.006f, ix * 0.245f, iy * 0.39f, k * h + h / 2, mat);
+                            if (iy != 0) L.B(0.10f, 0.002f, 0.05f, ix * 0.245f - 0.12f, iy * 0.39f + iy * 0.1935f, k * h + h * 0.6f, M.label);
+                        }
+                if (v == 0) L.B(0.995f, 1.185f, H * 0.92f, 0, 0, H * 0.92f / 2 + 0.002f, M.wrap);
+            }
+            else if (v == 2)
+            {
+                foreach (int ix in new[] { -1, 1 })
+                    foreach (int iy in new[] { -1, 1 })
+                    {
+                        L.Cyl(0.23f, H * 0.94f, ix * 0.25f, iy * 0.29f, H * 0.47f, 'Z', M.drum);
+                        L.Cyl(0.235f, 0.025f, ix * 0.25f, iy * 0.29f, H * 0.32f, 'Z', M.drum);
+                        L.Cyl(0.235f, 0.025f, ix * 0.25f, iy * 0.29f, H * 0.66f, 'Z', M.drum);
+                        L.Cyl(0.03f, 0.02f, ix * 0.25f + 0.1f, iy * 0.29f, H * 0.945f, 'Z', M.black);
+                    }
+            }
+            else
+            {
+                for (int k = 0; k < 3; k++)
+                    foreach (int iy in new[] { -1, 1 }) L.B(0.96f, 0.57f, 0.17f, 0, iy * 0.295f, k * 0.18f + 0.085f, M.bag);
+                float[] hs = { 0.38f, 0.42f, 0.34f, 0.40f }; int q = 0;
+                foreach (int ix in new[] { -1, 1 })
+                    foreach (int iy in new[] { -1, 1 })
+                    {
+                        float h = hs[q++];
+                        L.B(0.47f, 0.57f, h, ix * 0.245f, iy * 0.295f, 0.54f + h / 2, ix + iy == 0 ? M.prodRed : M.cardboard);
+                    }
+            }
+            var lt = L.Build("Load", go.transform);
             lt.localPosition = new Vector3(0, (float)config.palletH, 0);
             return go;
         }
