@@ -42,20 +42,39 @@ namespace CaseLine
         public const double X_END = 9.50;
         public const double V = 0.35;
         public const double ACC = 0.8;
+        public const double ACC_PUSH = 1.0;
         public const double X_HEAD = 4.30;
         public const double MAG_Y = 0.55;
         public const double LIFT = 0.20;
+        public const double ARM_UP = 0.40;
         public const double X_BAR = 2.78;
-        public const double X_KICK = 2.62;
-        public const double KICK_Z = REST_Z + H + 0.18;
+        public const double RAIL_LEN = 0.22;
+        public const double RAIL_END = 3.95;
+        public const double RAIL_Z0 = 0.10, RAIL_Z1 = 0.014, RAIL_R = 0.008;
+        public const double X_KICK = 2.70;
+        public const double KICK_H = 0.36, KICK_R = 0.38;
+        public const double KICK_START = X_KICK - 0.26;
+        public const double KICK_LEN = 0.10;
+        public static readonly double KICK_PARK = -60.0 * Math.PI / 180.0;
+        public const double KICK_Z = REST_Z + H + KICK_H;
+        public const double PLOW_X0 = 3.25, PLOW_X1 = 3.80;
+        public const double PLOW_Y0 = 0.20, PLOW_Y1 = 0.045, PLOW_Z0 = 0.16, PLOW_Z1 = 0.014;
         public const double CHUTE_SY = 1.05, CHUTE_SZ = TABLE + 0.95;
         public const double CHUTE_EY = 0.30, CHUTE_EZ = TABLE + 0.62;
         public static readonly double CHUTE_A = Math.Atan2(CHUTE_SZ - CHUTE_EZ, CHUTE_SY - CHUTE_EY);
         public const double ROLLER_R = 0.025;
-        public const double PUSH_REST = -0.32;
+        public const double PUSH_REST = -0.25;
+        public const double PUSH_END = 0.24;
+        public const double G = 9.81;
         public const double HALF_PI = Math.PI / 2;
-        public const double FILL_DONE = 10.4;
         public const double TAPE_W = 0.048, TAPE_T = 0.0006, TAB = 0.06;
+
+        public const double T_OPEN0 = 0.9, T_OPEN1 = 1.5;
+        public const double T_DOWN0 = 1.5, T_DOWN1 = 1.9;
+        public const double T_PUSH = 2.45;
+        public const double FILL_ARRIVE = T_PUSH + X_FILL / V + V / ACC_PUSH;
+        public const double PACK_T0 = FILL_ARRIVE - 0.55, PACK_DT = 0.25, PACK_SLIDE = 0.7;
+        public const double FILL_DONE = PACK_T0 + 7 * PACK_DT + PACK_SLIDE + 0.45;
 
         static double Rad(double deg) => deg * Math.PI / 180.0;
         public static double Clamp01(double u) => u < 0 ? 0 : u > 1 ? 1 : u;
@@ -73,11 +92,23 @@ namespace CaseLine
         }
 
         // ------------------------------------------------------------ 박스 원점 경로
+        // 흡착 암은 블랭크 앞면(L2)을 잡음. 펼치는 동안 L2 는 x 가 그대로라 박스 원점 x = W cos(theta)
+        public static double Theta(double tau) => Rad(Lerp(2.0, 90.0, Smooth((tau - T_OPEN0) / (T_OPEN1 - T_OPEN0))));
+
+        public static double PushX(double tau)
+        {
+            double d = X_FILL, ta = V / ACC_PUSH, tt = d / V + ta, t = tau - T_PUSH;
+            if (t <= 0) return 0;
+            if (t < ta) return 0.5 * ACC_PUSH * t * t;
+            if (t < tt - ta) return 0.5 * ACC_PUSH * ta * ta + V * (t - ta);
+            if (t < tt) return d - 0.5 * ACC_PUSH * (tt - t) * (tt - t);
+            return d;
+        }
+
         public static double BoxX(double tau)
         {
-            if (tau < 2.2) return 0;
-            if (tau < 2.9) return 0.55 * Smooth((tau - 2.2) / 0.7);
-            if (tau < FILL_DONE) return 0.55 + Trap(tau - 3.0, X_FILL - 0.55);
+            if (tau < T_PUSH) return W * Math.Cos(Theta(tau));
+            if (tau < FILL_DONE) return PushX(tau);
             return X_FILL + Trap(tau - FILL_DONE, X_END - X_FILL);
         }
 
@@ -90,27 +121,75 @@ namespace CaseLine
         public static double BoxZ(double tau)
         {
             if (tau < 0.4) return REST_Z + LIFT * Smooth(tau / 0.4);
-            if (tau < 1.3) return REST_Z + LIFT;
-            return REST_Z + LIFT * (1 - Smooth((tau - 1.3) / 0.4));
+            if (tau < T_DOWN0) return REST_Z + LIFT;
+            return REST_Z + LIFT * (1 - Smooth((tau - T_DOWN0) / (T_DOWN1 - T_DOWN0)));
         }
 
-        public static double Theta(double tau)
+        // ------------------------------------------------------------ 위 날개 접촉
+        static double RailZ(double x) => RAIL_Z1 + (RAIL_Z0 - RAIL_Z1) * (1 - Smooth((x - X_BAR) / RAIL_LEN));
+
+        public static double LeadContact(double front)
         {
-            if (tau < 0.4) return Rad(Lerp(2.0, 10.0, Smooth(tau / 0.4)));
-            return Rad(Lerp(10.0, 90.0, Smooth((tau - 0.4) / 0.9)));
+            double best = -10.0;
+            double x0 = Math.Max(X_BAR, front - F), x1 = Math.Min(RAIL_END, front + F);
+            const int n = 40;
+            if (x1 < x0) return best;
+            for (int i = 0; i <= n; i++)
+            {
+                double xr = x0 + (x1 - x0) * i / n;
+                double s = front - xr, z = RailZ(xr) - RAIL_R;
+                if (s * s + z * z <= F * F) best = Math.Max(best, Math.Atan2(s, z));
+            }
+            return best;
+        }
+
+        public static double PlowContact(double X)
+        {
+            double best = -10.0;
+            double x0 = Math.Max(PLOW_X0, X - L / 2), x1 = Math.Min(PLOW_X1 + 0.15, X + L / 2);
+            const int n = 30;
+            if (x1 < x0) return best;
+            for (int i = 0; i <= n; i++)
+            {
+                double xp = x0 + (x1 - x0) * i / n;
+                double u = Clamp01((xp - PLOW_X0) / (PLOW_X1 - PLOW_X0));
+                double s = W / 2 - Lerp(PLOW_Y0, PLOW_Y1, u), z = Lerp(PLOW_Z0, PLOW_Z1, u) - RAIL_R;
+                if (s * s + z * z <= F * F) best = Math.Max(best, Math.Atan2(s, z));
+            }
+            return best;
+        }
+
+        static double KickU(double X) => Clamp01((X - L / 2 - KICK_START) / KICK_LEN);
+        static double TrailAngle(double X, double b) => b + (HALF_PI - b) * Smooth(KickU(X));
+
+        // 킥 중 팔 끝이 날개 위에 닿는 팔 각. 해가 없으면 NaN
+        public static double KickArmFor(double X, double b)
+        {
+            double rear = X - L / 2, phi = TrailAngle(X, b);
+            double s = Math.Sin(phi), c = Math.Cos(phi);
+            double ax = rear - X_KICK, az = -KICK_H;
+            double bb = ax * s + az * c, cc = ax * ax + az * az - KICK_R * KICK_R, D = bb * bb - cc;
+            if (D < 0) return double.NaN;
+            double r = double.NaN;
+            foreach (double rr in new[] { -bb - Math.Sqrt(D), -bb + Math.Sqrt(D) })
+                if (rr >= 0.0 && rr <= F + 1e-9 && (double.IsNaN(r) || rr > r)) r = rr;
+            if (double.IsNaN(r)) return double.NaN;
+            double qx = rear + r * s, qz = r * c;
+            return Math.Atan2(qx - X_KICK, qz - KICK_H);
         }
 
         // (아래 단변, 아래 장변, 위 앞 단변, 위 뒤 단변, 위 장변)
         public static void FlapAngles(double tau, out double bMinor, out double bMajor, out double lead, out double trail, out double major)
         {
             double X = BoxX(tau);
-            bMinor = HALF_PI * Smooth((tau - 1.7) / 0.5);
-            bMajor = HALF_PI * Smooth((tau - 2.2) / 0.45);
-            double b = SPLAY * Smooth((tau - 0.6) / 0.7);
-            double k = HALF_PI - SPLAY;
-            lead = b + k * Smooth((X - 2.70) / 0.25);
-            trail = b + k * Smooth((X - 2.98) / 0.20);
-            major = b + k * Smooth((X - 3.25) / 0.45);
+            bMinor = HALF_PI * Smooth((tau - 1.95) / 0.35);
+            bMajor = tau >= T_PUSH ? HALF_PI * Smooth((X - 0.02) / 0.28) : 0.0;
+            double b = SPLAY * Smooth((tau - 1.0) / 0.6);
+            double front = X + L / 2;
+            lead = Math.Max(Math.Max(b, LeadContact(front)), b + (HALF_PI - b) * Smooth((front - X_BAR - 0.30) / 0.15));
+            lead = Math.Min(lead, HALF_PI);
+            trail = TrailAngle(X, b);
+            major = Math.Min(HALF_PI, Math.Max(Math.Max(b, PlowContact(X)), b + (HALF_PI - b) * Smooth((X - 3.70) / 0.15)));
         }
 
         // ------------------------------------------------------------ 박스 판 (벽 4 + 날개 8)
@@ -184,30 +263,36 @@ namespace CaseLine
             };
         }
 
-        // ------------------------------------------------------------ 상품 8개
+        // ------------------------------------------------------------ 상품 8개 (슈트 등가속 → 포물선 낙하)
         static readonly int[,] PackOrder = { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } };
+        static readonly double CHUTE_D = Math.Sqrt((CHUTE_SY - CHUTE_EY) * (CHUTE_SY - CHUTE_EY) + (CHUTE_SZ - CHUTE_EZ) * (CHUTE_SZ - CHUTE_EZ));
+        static readonly double CHUTE_ACC = 2 * CHUTE_D / (PACK_SLIDE * PACK_SLIDE);
+        static readonly double CHUTE_VE = CHUTE_ACC * PACK_SLIDE;
 
         public static bool PackPose(double tau, int j, out D3 pos, out double ang)
         {
             int sx = PackOrder[j % 4, 0], sy = PackOrder[j % 4, 1], layer = j / 4;
             double ox = sx * 0.098, oy = sy * 0.072;
-            double ts = 7.40 + 0.30 * j;
+            double ts = PACK_T0 + PACK_DT * j;
             double X = BoxX(tau);
             var S = new D3(X_FILL + ox, CHUTE_SY, CHUTE_SZ); var E = new D3(X_FILL + ox, CHUTE_EY, CHUTE_EZ);
-            var G = new D3(X + ox, oy, REST_Z + PACK.z / 2 + layer * PACK.z);
+            var Gp = new D3(X + ox, oy, REST_Z + PACK.z / 2 + layer * PACK.z);
             if (tau < ts) { pos = S; ang = CHUTE_A; return false; }
-            double u = (tau - ts) / 0.5;
-            if (u < 1)
+            double t = tau - ts;
+            if (t < PACK_SLIDE)
             {
-                u = u * u;
+                double u = 0.5 * CHUTE_ACC * t * t / CHUTE_D;
                 pos = new D3(Lerp(S.x, E.x, u), Lerp(S.y, E.y, u), Lerp(S.z, E.z, u)); ang = CHUTE_A; return true;
             }
-            u = (tau - ts - 0.5) / 0.3;
-            if (u < 1)
+            double vz = CHUTE_VE * Math.Sin(CHUTE_A), dz = E.z - Gp.z;
+            double tf = (-vz + Math.Sqrt(vz * vz + 2 * G * dz)) / G;
+            t -= PACK_SLIDE;
+            if (t < tf)
             {
-                pos = new D3(Lerp(E.x, G.x, u), Lerp(E.y, G.y, u), Lerp(E.z, G.z, u * u)); ang = CHUTE_A * (1 - Smooth(u)); return true;
+                double u = t / tf;
+                pos = new D3(Lerp(E.x, Gp.x, u), Lerp(E.y, Gp.y, u), E.z - vz * t - 0.5 * G * t * t); ang = CHUTE_A * (1 - Smooth(u)); return true;
             }
-            pos = G; ang = 0; return true;
+            pos = Gp; ang = 0; return true;
         }
 
         // ------------------------------------------------------------ 기계 가동부
@@ -217,40 +302,55 @@ namespace CaseLine
             tau = t - PHASE - k * PERIOD;
         }
 
+        // 흡착면 = 블랭크 앞면(L2) 바깥 면 y
+        public static double GripY(double tau) => BoxY(tau) + W / 2 - W * Math.Sin(Theta(tau)) - T;
+        public static readonly double ARM_Y_MAG = MAG_Y + W / 2 - W * Math.Sin(Rad(2.0)) - T;
+
+        // 흡착 암 기준점 = 흡착컵 앞면 중심 (z 는 박스 원점 높이 규약, 컵은 그 위 H/2)
         public static D3 PickArm(double t)
         {
             Cycle(t, out _, out double tau);
-            if (tau < 1.75) return new D3(0, BoxY(tau), BoxZ(tau));
-            if (tau < 2.05) return new D3(0, 0.06 * Smooth((tau - 1.75) / 0.3), REST_Z);
-            if (tau < 4.3) return new D3(0, Lerp(0.06, MAG_Y + 0.06, Smooth((tau - 2.05) / 2.25)), REST_Z);
-            return new D3(0, Lerp(MAG_Y + 0.06, MAG_Y, Smooth((tau - 4.3) / 0.7)), REST_Z);
+            double y0 = GripY(2.3);
+            if (tau < 2.3) return new D3(0, GripY(tau), BoxZ(tau));
+            if (tau < 2.5) return new D3(0, y0 - 0.06 * Smooth((tau - 2.3) / 0.2), REST_Z);
+            if (tau < 3.0) return new D3(0, y0 - 0.06, REST_Z + ARM_UP * Smooth((tau - 2.5) / 0.5));
+            if (tau < 4.1) return new D3(0, Lerp(y0 - 0.06, ARM_Y_MAG - 0.05, Smooth((tau - 3.0) / 1.1)), REST_Z + ARM_UP);
+            if (tau < 4.55) return new D3(0, ARM_Y_MAG - 0.05, REST_Z + ARM_UP * (1 - Smooth((tau - 4.1) / 0.45)));
+            return new D3(0, Lerp(ARM_Y_MAG - 0.05, ARM_Y_MAG, Smooth((tau - 4.55) / 0.45)), REST_Z);
         }
 
         public static double PusherX(double t)
         {
             Cycle(t, out _, out double tau);
-            if (tau < 1.95) return PUSH_REST;
-            if (tau < 2.2) return Lerp(PUSH_REST, -L / 2 - 0.012, Smooth((tau - 1.95) / 0.25));
-            if (tau < 2.9) return BoxX(tau) - L / 2 - 0.012;
-            return Lerp(BoxX(2.9) - L / 2 - 0.012, PUSH_REST, Smooth((tau - 2.9) / 0.7));
+            double contact = -L / 2 - 0.012;
+            if (tau < 2.15) return PUSH_REST;
+            if (tau < T_PUSH) return Lerp(PUSH_REST, contact, Smooth((tau - 2.15) / (T_PUSH - 2.15)));
+            double p = Math.Min(BoxX(tau) + contact, PUSH_END);
+            if (tau < 3.95) return p;
+            return Lerp(PUSH_END, PUSH_REST, Smooth((tau - 3.95) / 0.6));
         }
 
+        // 뒤 날개 킥커 팔 (y축 회전 rad, 0 = 위, - = 뒤로)
         public static double KickerAngle(double t)
         {
-            double best = 0;
             long k0 = (long)Math.Floor((t - PHASE) / PERIOD);
             for (long k = k0 - 7; k <= k0; k++)
             {
                 double tau = t - PHASE - k * PERIOD;
                 if (tau < 0 || tau > LIFE) continue;
-                double X = BoxX(tau);
-                if (X > 2.8 && X < 3.5)
+                double X = BoxX(tau), rear = X - L / 2;
+                if (rear < KICK_START - 0.12 || rear > KICK_START + KICK_LEN + 0.14) continue;
+                double aFirst = KickArmFor(KICK_START + L / 2, SPLAY);
+                double aLast = KickArmFor(KICK_START + KICK_LEN + L / 2, SPLAY);
+                if (rear < KICK_START) return Lerp(KICK_PARK, aFirst, Smooth((rear - (KICK_START - 0.12)) / 0.12));
+                if (rear <= KICK_START + KICK_LEN)
                 {
-                    double a = Rad(115) * Smooth((X - 2.94) / 0.2) * (1 - Smooth((X - 3.22) / 0.14));
-                    best = Math.Max(best, a);
+                    double a = KickArmFor(X, SPLAY);
+                    return double.IsNaN(a) ? aLast : a;
                 }
+                return Lerp(aLast, KICK_PARK, Smooth((rear - KICK_START - KICK_LEN) / 0.14));
             }
-            return best;
+            return KICK_PARK;
         }
 
         public static double RollerAngle(double t) => V / ROLLER_R * t;

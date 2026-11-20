@@ -74,7 +74,7 @@ namespace CaseLine
             if (pusher) pusher.position = U(K.PusherX(t), 0, K.TABLE + 0.115);
             var a = K.PickArm(t);
             if (arm) arm.position = U(a);
-            if (carriage) carriage.position = U(0, a.y + K.W / 2 + K.T + 0.05, 0);
+            if (carriage) carriage.position = U(0, a.y - 0.05, 0);   // 암 수직봉 위치 (흡착면 뒤 0.05 m)
             if (kicker) kicker.rotation = Quaternion.AngleAxis(-(float)(K.KickerAngle(t) * Mathf.Rad2Deg), Vector3.forward) * kickerRest;
             float ra = -(float)(K.RollerAngle(t) * Mathf.Rad2Deg % 360.0);
             var rq = Quaternion.AngleAxis(ra, Vector3.forward);

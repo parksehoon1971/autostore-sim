@@ -285,11 +285,11 @@ def make_erector(M, coll, root):
     for sy in (-1, 1):
         P.box((0.05, 0.05, 0.10), (x0 - 0.01, sy * 0.40, zt + 0.02), M["orange"])
     # 푸셔 실린더 (몸체 왼쪽 끝 바깥)
-    P.cyl(0.035, 0.36, (-0.78, 0, TABLE + 0.115), M["alu"], "X", 24)
-    for x in (-0.95, -0.61):
+    P.cyl(0.035, 0.54, (-0.87, 0, TABLE + 0.115), M["alu"], "X", 24)
+    for x in (-1.13, -0.61):
         P.box((0.03, 0.09, 0.09), (x, 0, TABLE + 0.115), M["alu"])
-    P.span((-0.97, -0.05, TABLE + 0.0), (-0.60, 0.05, TABLE + 0.07), M["sus"])
-    P.span((-0.97, -0.05, 0.27), (-0.93, 0.05, TABLE + 0.07), M["sus"])
+    P.span((-1.15, -0.05, TABLE + 0.0), (-0.60, 0.05, TABLE + 0.07), M["sus"])
+    P.span((-1.15, -0.05, 0.27), (-1.11, 0.05, TABLE + 0.07), M["sus"])
     # 조작 박스 (앞 왼쪽): 비상정지, 시작, 작은 화면
     P.span((-0.60, y0 - 0.09, TABLE - 0.30), (-0.36, y0 - 0.002, TABLE - 0.06), M["ivory"])
     P.cyl(0.022, 0.03, (-0.52, y0 - 0.105, TABLE - 0.12), M["red"], "Y", 20)
@@ -305,7 +305,7 @@ def make_erector(M, coll, root):
     G = Parts()
     zb = K.REST_Z - K.F - 0.006
     yb0, yb1 = K.MAG_Y + K.W / 2 - 0.01, K.MAG_Y + K.W / 2 + 0.42
-    xa, xb = -K.L / 2 - K.W - 0.04, K.L / 2 + 0.04
+    xa, xb = -K.L / 2 - 0.04, K.L / 2 + K.W + 0.04      # 납작 블랭크: 앞면(L2) x [-L/2, L/2], 뒷면은 +x 로 W 만큼
     for x in (xa, xb):
         G.rod((x, yb0, zb), (x, yb1, zb), 0.008, M["zinc"])
         G.rod((x, yb0 + 0.02, zb), (x, yb0 + 0.02, zb + 0.55), 0.007, M["zinc"])       # 측면 세움 가이드 (사진의 와이어)
@@ -327,27 +327,28 @@ def make_erector(M, coll, root):
         for sx in (-1, 1):
             Q.span((sx * 0.62 - 0.03, y - 0.03, 0.27 if y < 0.5 else 0.0), (sx * 0.62 + 0.03, y + 0.03, zbeam), M["alu"])
         Q.span((-0.65, y - 0.03, zbeam - 0.06), (0.65, y + 0.03, zbeam + 0.02), M["alu"])
-    Q.span((0.10, -0.06, zbeam - 0.02), (0.18, 1.13, zbeam + 0.06), M["alu"])            # 주 보 (x = 0.14)
-    Q.span((0.10, -0.06, zbeam + 0.06), (0.18, 1.13, zbeam + 0.08), M["black"])          # 케이블 덕트
-    Q.span((0.08, -0.08, zbeam - 0.04), (0.20, -0.06, zbeam + 0.08), M["orange"])        # 끝 스토퍼
+    Q.span((0.10, -0.36, zbeam - 0.02), (0.18, 1.13, zbeam + 0.06), M["alu"])            # 주 보 (x = 0.14)
+    Q.span((0.10, -0.36, zbeam + 0.06), (0.18, 1.13, zbeam + 0.08), M["black"])          # 케이블 덕트
+    Q.span((0.08, -0.38, zbeam - 0.04), (0.20, -0.36, zbeam + 0.08), M["orange"])        # 끝 스토퍼
     Q.build("Erector_Gantry", coll, root)
 
     # 가동부: 푸셔 (원점 = 판 중심), 흡착 암 (원점 = 박스 원점 규약), 캐리지
     U = Parts()
     U.box((0.012, 0.24, 0.20), (0, 0, 0), M["sus"])
     U.box((0.004, 0.22, 0.18), (0.008, 0, 0), M["rubber"])
-    U.cyl(0.012, 0.46, (-0.236, 0, 0), M["zinc"], "X", 16)
+    U.cyl(0.012, 0.86, (-0.43, 0, 0), M["zinc"], "X", 16)
     pusher = U.build("Pusher", coll, root); pusher.location = (K.PUSH_REST, 0, TABLE + 0.115)
 
+    # 원점 = 흡착컵 앞면 중심 (컵은 +y 를 향함, 앞면 y = 0 이 블랭크 앞면에 닿음), 높이 = 박스 원점 + H/2
     A = Parts()
-    yp = K.W / 2 + K.T + 0.03
-    A.box((0.22, 0.012, 0.13), (0, yp, K.H / 2), M["alu"])
+    zc = K.H / 2
+    A.box((0.22, 0.006, 0.13), (0, -0.029, zc), M["alu"])
     for sx in (-1, 1):
-        A.cyl(0.026, 0.02, (sx * 0.065, yp - 0.016, K.H / 2), M["cup"], "Y", 20, r2=0.018)
-        A.cyl(0.008, 0.02, (sx * 0.065, yp + 0.016, K.H / 2), M["blue"], "Y", 10)
-    A.box((0.04, 0.03, 0.10), (0, yp + 0.02, K.H / 2 + 0.11), M["alu"])
-    A.cyl(0.012, 0.80, (0, yp + 0.02, K.H / 2 + 0.55), M["zinc"], "Z", 16)
-    A.cyl(0.03, 0.30, (0, yp + 0.02, K.H / 2 + 1.05), M["alu"], "Z", 20)
+        A.cyl(0.018, 0.022, (sx * 0.065, -0.011, zc), M["cup"], "Y", 20, r2=0.026)    # 주름 컵: 앞(+y)이 넓음
+        A.cyl(0.008, 0.02, (sx * 0.065, -0.042, zc), M["blue"], "Y", 10)
+    A.box((0.04, 0.03, 0.10), (0, -0.047, zc + 0.11), M["alu"])
+    A.cyl(0.012, 0.80, (0, -0.05, zc + 0.55), M["zinc"], "Z", 16)
+    A.cyl(0.03, 0.30, (0, -0.05, zc + 1.05), M["alu"], "Z", 20)
     arm = A.build("PickArm", coll, root)
     C_ = Parts()
     C_.span((-0.06, -0.08, zbeam - 0.10), (0.10, 0.08, zbeam - 0.02), M["alu"])
@@ -359,10 +360,11 @@ def make_blank_stack(M, coll, root, n=14):
     """매거진 뒤쪽 정적 블랭크 더미 (tau = -1 상태 판 모양을 합친 메쉬)"""
     P = Parts()
     slabs = K.box_slabs(-1.0)
+    ox = K.box_x(0.0)                     # 대기 블랭크와 같은 x (앞면 L2 가 x [-L/2, L/2])
     for i in range(1, n + 1):
         oy = K.MAG_Y + i * 0.017
         for nm, cen, ex, ey, ez, size in slabs:
-            mtx = Matrix(((ex[0], ey[0], ez[0], cen[0]), (ex[1], ey[1], ez[1], cen[1] + oy),
+            mtx = Matrix(((ex[0], ey[0], ez[0], cen[0] + ox), (ex[1], ey[1], ez[1], cen[1] + oy),
                           (ex[2], ey[2], ez[2], cen[2] + K.REST_Z), (0, 0, 0, 1)))
             P.obox(size, mtx, M["card"])
     return P.build("Magazine_Blanks", coll, root)
@@ -403,16 +405,25 @@ def make_fill_and_fold(M, coll, root):
     P.cyl(0.03, 0.12, (K.X_FILL + 0.32, 0.285, TABLE + 0.51), M["green"], "Z", 16)       # 경광등 (뒤쪽)
     # 상부 접지: 앞 날개 고정 바, 킥커 지지, 플로 레일
     zt = K.REST_Z + K.H
+    # 킥커 축 + 기둥
     for sy_ in (-1, 1):
-        P.span((K.X_BAR - 0.015, sy_ * 0.30 - 0.015, 0), (K.X_BAR + 0.015, sy_ * 0.30 + 0.015, K.KICK_Z + 0.05), M["alu"])
         P.span((K.X_KICK - 0.015, sy_ * 0.30 - 0.015, 0), (K.X_KICK + 0.015, sy_ * 0.30 + 0.015, K.KICK_Z + 0.05), M["alu"])
-    P.rod((K.X_BAR, -0.30, zt + 0.035), (K.X_BAR, 0.30, zt + 0.035), 0.01, M["zinc"])
     P.rod((K.X_KICK, -0.30, K.KICK_Z), (K.X_KICK, 0.30, K.KICK_Z), 0.012, M["zinc"])
     P.cyl(0.02, 0.18, (K.X_KICK - 0.05, 0.31, K.KICK_Z + 0.08), M["alu"], "X", 16)       # 킥커 실린더
+    # 앞 단변 날개 중앙 레일 (y = 0): 윗면 위 RAIL_Z0 → RAIL_Z1 로 내려온 뒤 RAIL_END 까지
+    xs = [K.X_BAR + K.RAIL_LEN * i / 10 for i in range(11)] + [K.RAIL_END]
+    for xa_, xb_ in zip(xs[:-1], xs[1:]):
+        P.rod((xa_, 0, zt + K._rail_z(xa_)), (xb_, 0, zt + K._rail_z(xb_)), K.RAIL_R, M["zinc"])
+    P.rod((K.X_BAR - 0.03, 0, zt + K.RAIL_Z0 + 0.03), (K.X_BAR, 0, zt + K.RAIL_Z0), K.RAIL_R, M["zinc"])   # 들림 끝
+    zbm = zt + 0.24
+    for xh in (2.92, 3.25, 3.70):                     # 문형 지지대 + 행거
+        for sy_ in (-1, 1):
+            P.span((xh - 0.015, sy_ * 0.30 - 0.015, 0), (xh + 0.015, sy_ * 0.30 + 0.015, zbm + 0.02), M["alu"])
+        P.span((xh - 0.015, -0.315, zbm - 0.02), (xh + 0.015, 0.315, zbm + 0.02), M["alu"])
+        P.span((xh - 0.005, -0.006, zt + K._rail_z(xh)), (xh + 0.005, 0.006, zbm - 0.02), M["zinc"])
     for sy_ in (-1, 1):
         P.rod((3.25, sy_ * 0.20, zt + 0.16), (3.80, sy_ * 0.045, zt + 0.014), 0.008, M["zinc"])
         P.rod((3.25, sy_ * 0.20, zt + 0.16), (3.25, sy_ * 0.30, zt + 0.16), 0.008, M["zinc"])
-        P.span((3.25 - 0.015, sy_ * 0.30 - 0.015, 0), (3.25 + 0.015, sy_ * 0.30 + 0.015, zt + 0.17), M["alu"])
         P.rod((3.80, sy_ * 0.045, zt + 0.014), (3.95, sy_ * 0.045, zt + 0.014), 0.008, M["zinc"])
     # 컨베이어 측면 가이드 (박스 폭)
     gy = K.W / 2 + K.T + 0.012
@@ -427,11 +438,13 @@ def make_fill_and_fold(M, coll, root):
     P.span((1.93, -0.02, TABLE - 0.27), (2.07, 0.12, TABLE - 0.12), M["frameGrey"])
     P.build("FillAndFold", coll, root)
     # 킥커 팔 (원점 = 회전축, y 축 회전)
+    # 팔은 위(+z)를 향해 만들고 y 축으로 돌림. 끝(KICK_R)의 롤러 면이 날개에 닿음
     Kp = Parts()
-    Kp.cyl(0.022, 0.06, (0, -0.10, 0), M["alu"], "Y", 16)
-    Kp.box((0.02, 0.02, 0.22), (0, -0.10, 0.11), M["alu"])
-    Kp.box((0.05, 0.22, 0.02), (0, 0.0, 0.22), M["rubber"])
-    Kp.box((0.03, 0.03, 0.02), (0, -0.10, 0.22), M["alu"])
+    rr = 0.014
+    for sy_ in (-1, 1):
+        Kp.cyl(0.022, 0.04, (0, sy_ * 0.09, 0), M["alu"], "Y", 16)
+        Kp.box((0.024, 0.016, K.KICK_R - rr), (0, sy_ * 0.09, (K.KICK_R - rr) / 2), M["alu"])
+    Kp.cyl(rr, 0.20, (0, 0, K.KICK_R - rr), M["rubber"], "Y", 16)
     kick = Kp.build("Kicker", coll, root); kick.location = (K.X_KICK, 0, K.KICK_Z)
     return kick
 
@@ -690,7 +703,7 @@ def animate(boxes, pusher, arm, carriage, kicker, rollers):
     bake_series(pusher, "location", [(K.pusher_x(t), 0, TABLE + 0.115) for t in ts], 3)
     arm_s = [K.pick_arm(t) for t in ts]
     bake_series(arm, "location", arm_s, 3)
-    bake_series(carriage, "location", [(0, p[1] + K.W / 2 + K.T + 0.05, 0) for p in arm_s], 3)
+    bake_series(carriage, "location", [(0, p[1] - 0.05, 0) for p in arm_s], 3)   # 캐리지 = 암 수직봉 (y - 0.05)
     bake_series(kicker, "rotation_euler", [(0, K.kicker_angle(t), 0) for t in ts], 3)
     for r in rollers:
         bake_channel(r, "rotation_euler", 1, [1, FRAMES], [0.0, K.roller_angle((FRAMES - 1) / FPS)])
