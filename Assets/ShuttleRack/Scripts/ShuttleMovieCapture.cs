@@ -42,8 +42,7 @@ namespace ShuttleRack
             view.cinematicCamera = true;
             Time.captureFramerate = fps;
             IsRecording = true;
-            rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { antiAliasing = 1 };
-            rt.Create();
+            rt = EquipFX.CameraFX.MakeRecordTarget(width, height);   // 32비트 깊이 (원거리 깜빡임 방지)
             cam.targetTexture = rt;
             ShuttleCaption cap = captions ? BuildCaptions() : null;
             for (int i = 0; i < 5; i++) yield return null;

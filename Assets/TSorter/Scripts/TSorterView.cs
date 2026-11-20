@@ -295,16 +295,19 @@ namespace TSorter
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -568,6 +571,7 @@ namespace TSorter
                     var rs = go.GetComponentsInChildren<Renderer>(); var bb = rs[0].bounds; foreach (var x in rs) bb.Encapsulate(x.bounds);
                     float sc = RobotL / Mathf.Max(1e-4f, Mathf.Max(bb.size.x, bb.size.z));
                     if (sc < 0.8f || sc > 1.25f) go.transform.localScale *= sc;
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                 }
                 else
                 {

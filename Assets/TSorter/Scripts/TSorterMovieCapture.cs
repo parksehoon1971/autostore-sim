@@ -40,8 +40,7 @@ namespace TSorter
             view.cinematicCamera = true;
             Time.captureFramerate = fps;
             IsRecording = true;
-            rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { antiAliasing = 1 };
-            rt.Create();
+            rt = EquipFX.CameraFX.MakeRecordTarget(width, height);   // 32비트 깊이 (원거리 깜빡임 방지)
             cam.targetTexture = rt;
             // 반사 프로브/그림자 안정화용 프레임
             for (int i = 0; i < 5; i++) yield return null;

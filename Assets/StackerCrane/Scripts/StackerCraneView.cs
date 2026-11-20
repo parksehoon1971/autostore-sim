@@ -304,16 +304,19 @@ namespace StackerCrane
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -534,6 +537,7 @@ namespace StackerCrane
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
                     FitScale(go, TopZ + 0.62f);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                     foreach (var t in go.GetComponentsInChildren<Transform>())
                     {
                         if (t.name.StartsWith("Carriage") && !t.name.StartsWith("CarriageBody")) car = t;
@@ -606,6 +610,7 @@ namespace StackerCrane
                     go = new GameObject("PalletTpl_" + v); go.transform.SetParent(holder, false);
                     var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
                     M.Remap(m); FitScale(m, (float)config.palletH + 1.0f);
+                    EquipFX.MeshFix.ResolveModel(m);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                 }
                 else go = FallbackPallet(v, holder);
                 tpl.Add(go);

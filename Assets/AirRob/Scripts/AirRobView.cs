@@ -278,16 +278,19 @@ namespace AirRob
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -536,6 +539,7 @@ namespace AirRob
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
                     FitScale(go, MastH + 0.06f);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                     foreach (var t in go.GetComponentsInChildren<Transform>())
                     {
                         if (t.name == "Carriage") T.car = t;
@@ -590,6 +594,7 @@ namespace AirRob
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
                     FitScale(go, dz);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                 }
                 else
                 {
@@ -628,6 +633,7 @@ namespace AirRob
                     go = new GameObject("ToteTpl_" + v); go.transform.SetParent(holder, false);
                     var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
                     M.Remap(m); FitScale(m, (float)config.toteH + 0.01f);
+                    EquipFX.MeshFix.ResolveModel(m);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                 }
                 else go = FallbackTote(v, holder);
                 tpl.Add(go);
