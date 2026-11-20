@@ -102,6 +102,7 @@ namespace AirRob
             drag = Input.GetMouseButton(0) || Input.GetMouseButton(1);
             delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 3f; scroll = Input.mouseScrollDelta.y * 0.5f;
 #endif
+            if (EquipFX.HudInput.PointerOverUi) { drag = false; scroll = 0; }   // 통합 HUD 위에서는 오비트 안 함
             if (drag) { yaw += delta.x; pitch = Mathf.Clamp(pitch - delta.y, 2, 85); }
             dist = Mathf.Clamp(dist - scroll, 2, 50);
             var rot = Quaternion.Euler(pitch, yaw, 0);
