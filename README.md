@@ -222,3 +222,41 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 ```
 
 결과: 로봇 20대에서 약 790 토트/h, 평균 리드타임 80초. 바닥 4 m/s, 등반 최대 14 m, 적재 30 kg, 토트 650×450 mm는 공개 수치이고 랙 칸 폭·단 간격·로봇 치수·등반 속도는 가정입니다. Exotec 제품 도면이 아닙니다. 자세한 내용은 [docs/skypod-research.md](docs/skypod-research.md).
+
+---
+
+# Libiao AirRob — 같은 방식의 장면 (랙 면 레일 로봇 + 바닥 이송 로봇)
+
+통로 4개, 높이 약 6 m 랙 양쪽 면을 따라 AirRob 4대가 바닥·위 레일 위에서 수평 2 m/s, 수직 1 m/s로 동시에 움직이며 양방향 훅으로 토트를 당겨 옵니다. 꺼낸 토트를 그 칸 바로 아래까지 내려, 랙 맨 아래 터널에서 기다리는 바닥 로봇 위로 밀어 줍니다. 바닥 로봇 16대가 토트를 작업 스테이션 2곳으로 나르고, 피킹 뒤 같은 칸 아래로 돌아와 AirRob 에 돌려줍니다. 같은 Unity 프로젝트 안에 **애니메이션 → AirRob** 메뉴로 들어 있습니다.
+
+![AirRob 훅으로 맨 위 단 토트 당기기](docs/images/airrob_hook.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/airrob-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_airrob_trace.js` | 시뮬레이션 → Blender 궤적 `blender/airrob_trace.json` |
+| `blender/airrob_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/airrob/` | AirRob·바닥 로봇·토트 FBX/GLB, 렌더 이미지 |
+| `Assets/AirRob/Scripts/AirRobSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/AirRob/Scripts/AirRobView.cs` | 랙·레일·스테이션·펜스·AirRob·바닥 로봇·토트·조명·후처리 자동 구성, HUD |
+| `Assets/AirRob/Scripts/AirRobCamera.cs` | Blender와 같은 30초 카메라 동선 (동작 근접 샷) / 마우스 오비트 |
+| `Assets/AirRob/Scripts/AirRobCaption.cs` | 장비명 캡션 오버레이 (영상에도 들어감) |
+| `Assets/AirRob/Scripts/AirRobMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/AirRob/Editor/AirRobMenu.cs` | `애니메이션 → AirRob` 메뉴 |
+| `docs/airrob-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → AirRob → Open AirRob Scene** → **Play**. 30초 영상은 **애니메이션 → AirRob → Record 30s Movie (MP4, 1920x1080)** → `Recordings/airrob_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1342초 워밍업 직후, seed 3)에서 시작해 같은 장면이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (360 프레임 = 맨 위 단에서 훅으로 토트 당기기)
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --still 360
+
+# 30초 영상 (GPU 권장). GPU가 없으면 --engine eevee --samples 16 --res 1280x720
+blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blender/airrob_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_airrob_trace.js --bots 12 --seed 5  (카메라 동선은 seed 3, warmup 1342 기준)
+```
+
+결과: 바닥 로봇 16대, 주문 360 /h 에서 약 320 토트/h, 평균 리드타임 약 190초, AirRob 가동률 72%. 통로 4개에서 약 380 토트/h가 한계이고 병목은 AirRob 입니다. AirRob 폭 764 mm·깊이 820 mm, 수평 2 m/s·수직 1 m/s, 당기기·밀기 4.5 s, 토트 530×410 mm, 통로 850 mm는 공개 수치이고 마스트·훅 형상, 바닥 로봇, 단 간격, 색은 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/airrob-research.md](docs/airrob-research.md).
