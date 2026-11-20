@@ -201,8 +201,8 @@ namespace EquipFX
                     "선반이 회전해 원하는 빈을 작업자 앞으로 가져옵니다. 수평형 2대가 한 작업자 포드, 수직형 1대가 별도 작업자입니다.",
                     ScenePaths.Carousel, "CarouselPicking", typeof(global::Carousel.CarouselMovieCapture), "Carousel.EditorTools.CarouselMenu", "lines/h");
                 b.Core(v => v.Sim != null, v => v.Sim.t, v => v.Sim.HLinesPerHour + v.Sim.VLinesPerHour,
-                b.Part("수평 캐러셀 선반", "hCar", "units"); b.Part("수직 캐러셀 트레이", "vTray");
                     v => (v.Sim.HLinesPerHour + v.Sim.VLinesPerHour) * v.Sim.t / 3600.0, v => v.config.hCount + 1);
+                b.Part("수평 캐러셀 선반", "hCar", "units"); b.Part("수직 캐러셀 트레이", "vTray");
                 b.K("수평형 처리량", "lines/h", v => v.Sim.HLinesPerHour.ToString("0"));
                 b.K("수직형 처리량", "lines/h", v => v.Sim.VLinesPerHour.ToString("0"));
                 b.K("수평형 리드타임", "s", v => v.Sim.HLead.ToString("0"));
