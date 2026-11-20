@@ -7,18 +7,29 @@ using UnityEngine.UIElements;
 
 namespace EquipFX
 {
+    // 라이트 / 다크 테마 색. 테마를 바꾸면 HUD 를 다시 만들어 새 색을 씀 (EquipHud.SetTheme)
     public static class HudStyle
     {
-        public static readonly Color Panel = new Color(0.055f, 0.07f, 0.09f, 0.86f);
-        public static readonly Color PanelLine = new Color(1f, 1f, 1f, 0.08f);
-        public static readonly Color Tile = new Color(1f, 1f, 1f, 0.045f);
-        public static readonly Color TileHover = new Color(1f, 1f, 1f, 0.10f);
-        public static readonly Color Accent = new Color(0.25f, 0.78f, 1f);
-        public static readonly Color AccentDim = new Color(0.25f, 0.78f, 1f, 0.22f);
-        public static readonly Color Text = new Color(0.91f, 0.93f, 0.95f);
-        public static readonly Color Muted = new Color(0.58f, 0.63f, 0.69f);
-        public static readonly Color Track = new Color(1f, 1f, 1f, 0.14f);
-        public static readonly Color Rec = new Color(1f, 0.33f, 0.33f);
+        public const string PrefTheme = "EquipFX.Hud.Theme";   // 0 다크, 1 라이트
+        public static bool Dark = true;
+
+        static Color C(int rgb, float a = 1f) => new Color(((rgb >> 16) & 255) / 255f, ((rgb >> 8) & 255) / 255f, (rgb & 255) / 255f, a);
+
+        public static Color Panel => Dark ? C(0x16181D, 0.94f) : C(0xFFFFFF, 0.95f);
+        public static Color PanelLine => Dark ? C(0xFFFFFF, 0.06f) : C(0x0F172A, 0.08f);
+        public static Color Tile => Dark ? C(0xFFFFFF, 0.04f) : C(0x0F172A, 0.035f);
+        public static Color TileHover => Dark ? C(0xFFFFFF, 0.08f) : C(0x0F172A, 0.07f);
+        public static Color Accent => Dark ? C(0x4C8DFF) : C(0x2563EB);
+        public static Color AccentDim => Dark ? C(0x4C8DFF, 0.20f) : C(0x2563EB, 0.12f);
+        public static Color OnAccent => C(0xFFFFFF);
+        public static Color Text => Dark ? C(0xE7E9EE) : C(0x111827);
+        public static Color Strong => Dark ? C(0xFFFFFF) : C(0x030712);
+        public static Color Muted => Dark ? C(0x8A93A3) : C(0x6B7280);
+        public static Color Track => Dark ? C(0xFFFFFF, 0.12f) : C(0x0F172A, 0.10f);
+        public static Color Field => Dark ? C(0x000000, 0.30f) : C(0xF3F4F6);
+        public static Color Rec => C(0xEF4444);
+        public static readonly Color Ok = new Color(0.16f, 0.80f, 0.45f);
+        public static readonly Color Bad = new Color(0.95f, 0.27f, 0.27f);
 
         public static void Radius(VisualElement e, float r)
         {
@@ -57,8 +68,8 @@ namespace EquipFX
         {
             var b = new Button(onClick) { text = text, focusable = false };   // Space 키가 단추를 누르지 않도록
             b.style.fontSize = 13; b.style.color = Text;
-            b.style.backgroundColor = Tile; Border(b, 1, PanelLine); Radius(b, 6);
-            b.style.height = 30; Pad(b, 0, 10); Margin(b, 0, 3, 0, 3);
+            b.style.backgroundColor = Tile; Border(b, 0, Color.clear); Radius(b, 8);
+            b.style.height = 32; Pad(b, 0, 12); Margin(b, 0, 2, 0, 2);
             if (minWidth > 0) b.style.minWidth = minWidth;
             b.style.unityTextAlign = TextAnchor.MiddleCenter;
             b.RegisterCallback<PointerEnterEvent>(_ => { if (!b.ClassListContains("on")) b.style.backgroundColor = TileHover; });
@@ -70,20 +81,20 @@ namespace EquipFX
         public static void SetOn(Button b, bool on)
         {
             if (on) b.AddToClassList("on"); else b.RemoveFromClassList("on");
-            b.style.backgroundColor = on ? AccentDim : Tile;
-            b.style.color = on ? Color.white : Text;
-            Border(b, 1, on ? new Color(Accent.r, Accent.g, Accent.b, 0.7f) : PanelLine);
+            b.style.backgroundColor = on ? Accent : Tile;
+            b.style.color = on ? OnAccent : Text;
         }
     }
 
     // ------------------------------------------------------------------ 아이콘 단추
     public class IconButton : VisualElement
     {
-        public enum Kind { Play, Pause, Restart, Back, Forward }
+        public enum Kind { Play, Pause, Restart, Back, Forward, Close, Hide }
         Kind kind; bool hover;
         readonly float size;
         public Action clicked;
         public Color color = HudStyle.Text;
+        public Color? hoverBg;
 
         public Kind Icon { get => kind; set { if (kind != value) { kind = value; MarkDirtyRepaint(); } } }
 
@@ -94,10 +105,10 @@ namespace EquipFX
             HudStyle.Radius(this, size / 2);
             HudStyle.Margin(this, 0, 3, 0, 3);
             var bg = primary ? HudStyle.Accent : HudStyle.Tile;
-            var bgHover = primary ? new Color(0.45f, 0.85f, 1f) : HudStyle.TileHover;
-            if (primary) color = new Color(0.03f, 0.08f, 0.12f);
+            var bgHover = primary ? Color.Lerp(HudStyle.Accent, Color.white, 0.18f) : HudStyle.TileHover;
+            if (primary) color = HudStyle.OnAccent;
             style.backgroundColor = bg;
-            RegisterCallback<PointerEnterEvent>(_ => { hover = true; style.backgroundColor = bgHover; });
+            RegisterCallback<PointerEnterEvent>(_ => { hover = true; style.backgroundColor = hoverBg ?? bgHover; });
             RegisterCallback<PointerLeaveEvent>(_ => { hover = false; style.backgroundColor = bg; });
             RegisterCallback<ClickEvent>(_ => clicked?.Invoke());
             generateVisualContent += Draw;
@@ -124,6 +135,19 @@ namespace EquipFX
                 case Kind.Back:
                     Poly(p, new Vector2(c, c - u * 0.9f), new Vector2(c - u * 1.2f, c), new Vector2(c, c + u * 0.9f));
                     Poly(p, new Vector2(c + u * 1.2f, c - u * 0.9f), new Vector2(c, c), new Vector2(c + u * 1.2f, c + u * 0.9f));
+                    break;
+                case Kind.Close:
+                    p.lineWidth = Mathf.Max(1.6f, s * 0.06f); p.lineCap = LineCap.Round;
+                    p.BeginPath(); p.MoveTo(new Vector2(c - u, c - u)); p.LineTo(new Vector2(c + u, c + u)); p.Stroke();
+                    p.BeginPath(); p.MoveTo(new Vector2(c + u, c - u)); p.LineTo(new Vector2(c - u, c + u)); p.Stroke();
+                    break;
+                case Kind.Hide:   // 눈 + 사선
+                    p.lineWidth = Mathf.Max(1.5f, s * 0.055f); p.lineCap = LineCap.Round; p.lineJoin = LineJoin.Round;
+                    p.BeginPath(); p.MoveTo(new Vector2(c - u * 1.4f, c));
+                    p.BezierCurveTo(new Vector2(c - u * 0.6f, c - u * 1.2f), new Vector2(c + u * 0.6f, c - u * 1.2f), new Vector2(c + u * 1.4f, c));
+                    p.BezierCurveTo(new Vector2(c + u * 0.6f, c + u * 1.2f), new Vector2(c - u * 0.6f, c + u * 1.2f), new Vector2(c - u * 1.4f, c));
+                    p.Stroke();
+                    p.BeginPath(); p.MoveTo(new Vector2(c - u * 1.1f, c + u * 1.1f)); p.LineTo(new Vector2(c + u * 1.1f, c - u * 1.1f)); p.Stroke();
                     break;
                 case Kind.Forward:
                     Poly(p, new Vector2(c, c - u * 0.9f), new Vector2(c + u * 1.2f, c), new Vector2(c, c + u * 0.9f));
@@ -176,12 +200,12 @@ namespace EquipFX
 
             hoverLine = new VisualElement { pickingMode = PickingMode.Ignore };
             hoverLine.style.position = Position.Absolute; hoverLine.style.width = 2; hoverLine.style.top = -5; hoverLine.style.height = 14;
-            hoverLine.style.backgroundColor = new Color(1, 1, 1, 0.35f); hoverLine.style.display = DisplayStyle.None;
+            hoverLine.style.backgroundColor = HudStyle.Muted; hoverLine.style.display = DisplayStyle.None;
             track.Add(hoverLine);
 
             knob = new VisualElement { pickingMode = PickingMode.Ignore };
             knob.style.position = Position.Absolute; knob.style.width = 14; knob.style.height = 14; knob.style.top = -5;
-            knob.style.marginLeft = -7; knob.style.backgroundColor = Color.white; HudStyle.Radius(knob, 7);
+            knob.style.marginLeft = -7; knob.style.backgroundColor = HudStyle.OnAccent; HudStyle.Radius(knob, 7);
             HudStyle.Border(knob, 2, HudStyle.Accent);
             track.Add(knob);
 
@@ -237,7 +261,7 @@ namespace EquipFX
                 var m = new VisualElement { pickingMode = PickingMode.Ignore };
                 m.style.position = Position.Absolute; m.style.width = 2; m.style.marginLeft = -1;
                 m.style.top = 0; m.style.height = 4; m.style.left = Length.Percent(s / length * 100f);
-                m.style.backgroundColor = new Color(1, 1, 1, 0.5f);
+                m.style.backgroundColor = HudStyle.Muted;
                 marks.Add(m);
             }
         }
@@ -277,7 +301,7 @@ namespace EquipFX
             if (w < 4 || h < 4) return;
             var p = mgc.painter2D;
             // 기준선 (0, 절반, 최대)
-            p.lineWidth = 1f; p.strokeColor = new Color(1, 1, 1, 0.07f);
+            p.lineWidth = 1f; p.strokeColor = HudStyle.PanelLine;
             for (int i = 0; i <= 2; i++)
             {
                 float y = Mathf.Round(h * i / 2f) + 0.5f;

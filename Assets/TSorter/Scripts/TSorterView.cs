@@ -27,6 +27,9 @@ namespace TSorter
 
         public TSorterSim Sim { get; private set; }
         public Camera Cam { get; private set; }
+        // 배치 게임 모듈 모드: 건물·조명·카메라 없이 설비만 만들고, 옮겨 놓은 위치(transform.position)로 동기화
+        [System.NonSerialized] public bool moduleMode;
+        public static Vector3 UOff;   // U() 가 더하는 위치. 모듈 동기화 중에만 0 이 아님
         public TSorterCaption Caption { get; private set; }
 
         // 장면 치수 (Blender 스크립트와 같은 값)
@@ -47,7 +50,7 @@ namespace TSorter
         double acc;
 
         // ------------------------------------------------------------------ 좌표 변환
-        public static Vector3 U(double x, double y, double z) => new Vector3((float)x, (float)z, (float)y);
+        public static Vector3 U(double x, double y, double z) => UOff + new Vector3((float)x, (float)z, (float)y);
         // Blender 오일러 XYZ (R = Rz·Ry·Rx, 오른손) → Unity
         public static Quaternion R(double rx, double ry, double rz) =>
             Quaternion.AngleAxis((float)(-rz * Mathf.Rad2Deg), Vector3.up) *
@@ -74,14 +77,14 @@ namespace TSorter
             cubeMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
             tmp = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             cylMesh = tmp.GetComponent<MeshFilter>().sharedMesh; Destroy(tmp);
-            BuildEnvironment();
+            if (!moduleMode) BuildEnvironment();
             BuildPlatform();
             BuildBins();
             BuildStations();
             BuildRobots();
             BuildParcelTemplates();
-            BuildCameraAndPost();
-            if (showCaption)
+            if (!moduleMode) BuildCameraAndPost();
+            if (showCaption && !moduleMode)
             {
                 Caption = gameObject.GetComponent<TSorterCaption>();
                 if (Caption == null) Caption = gameObject.AddComponent<TSorterCaption>();
@@ -97,7 +100,9 @@ namespace TSorter
             acc += Time.deltaTime * simSpeed;
             int guard = 0;
             while (acc >= subStep - 1e-6 && guard++ < 2000) { Sim.Step(subStep); acc -= subStep; }
+            UOff = moduleMode ? transform.position : Vector3.zero;
             SyncAll();
+            UOff = Vector3.zero;
         }
 
         // ------------------------------------------------------------------ 동기화

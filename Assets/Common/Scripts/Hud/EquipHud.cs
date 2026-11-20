@@ -1,10 +1,11 @@
-// 통합 HUD (플레이 모드, UI Toolkit). 어떤 설비 장면에서 Play 를 눌러도 자동으로 뜹니다.
-//  - 왼쪽: 솔루션 라이브러리. 지금까지 만든 설비 11종을 눌러 바로 전환 (장면 파일이 있으면 열고, 없으면 코드로 만듦)
-//  - 위쪽: 처음부터 / 재생·일시정지 / ±5 s / 재생 속도 (0.25×~8×) / 30초 타임라인 (샷 경계 눈금, 끌어서 이동)
-//          / 카메라 (시네마틱 · 자유 시점) / 자막 / 30초 반복 / 30초 녹화 (에디터) / HUD 숨김
-//  - 오른쪽: 선택한 설비의 설명, 실시간 대시보드 (처리량·최근 1분 처리량 그래프·KPI), 속성 (로봇 수·주문량·시드 변경 → 다시 시작, 모델 사양)
-// 단축키: H HUD 숨김/표시, Space 재생/일시정지, R 처음부터, ← → 5초 이동, C 카메라 전환
-// 녹화(애니메이션 > <설비> > Record 30s Movie) 중에는 HUD 가 자동으로 숨고 시간도 건드리지 않습니다. 녹화 영상에는 HUD 가 들어가지 않습니다.
+// 통합 HUD (플레이 모드, UI Toolkit). 두 가지 모드가 있습니다.
+//  ■ 배치 (기본): 넓은 메인 공간에 왼쪽 라이브러리의 설비를 끌어다 설치하는 게임. 설비를 클릭하면 오른쪽 속성 패널에
+//    속성이 나오고, 그 왼쪽 대시보드에 공장 전체 합계와 선택한 설비의 실시간 KPI 가 나옵니다. (LayoutWorld.cs)
+//  ■ 애니메이션 (옵션): 설비 하나의 30초 시네마틱 장면. 타임라인·카메라·자막·반복·녹화.
+// 위쪽 막대: 모드 전환 / 재생·일시정지 / 속도 / (애니메이션) 타임라인 등 / 테마(다크·라이트) / HUD 숨김 / 닫기
+// 단축키: H HUD 숨김/표시, Space 재생/일시정지, (애니메이션) R 처음부터, ← → 5초 이동, C 카메라
+//         (배치) 마우스 오른쪽 끌기 회전, 가운데 끌기·WASD 이동, 휠 확대, F 선택 설비로, Delete 삭제, Esc 취소
+// 녹화(애니메이션 > <설비> > Record 30s Movie) 중에는 HUD 가 자동으로 숨고 시간도 건드리지 않습니다.
 // 끄기: 메뉴 애니메이션 > 통합 HUD > 플레이 모드에서 HUD 표시
 using System;
 using System.Collections;
@@ -22,28 +23,30 @@ using UnityEngine.InputSystem.UI;
 
 namespace EquipFX
 {
-    // 마우스가 HUD 위에 있으면 장면 카메라의 마우스 오비트를 막음
+    // 마우스가 HUD 위에 있으면 장면 카메라의 마우스 조작을 막음 / 글자 입력 중이면 단축키를 막음
     public static class HudInput
     {
         public static bool PointerOverUi;
+        public static bool Typing;
     }
 
     public class EquipHud : MonoBehaviour
     {
         public const string PrefEnabled = "EquipFX.Hud.Enabled";
         public const float MovieLength = 30f;
-        const float FastForward = 24f;            // 타임라인 앞으로 이동할 때 배속
-        const float RateWindow = 60f;             // 최근 처리량 창 (시뮬레이션 초)
+        const float FastForward = 24f;
+        const float RateWindow = 60f;
         static readonly float[] Speeds = { 0.25f, 0.5f, 1f, 2f, 4f, 8f };
 
         // 에디터 쪽에서 채움 (Assets/Common/Editor/EquipHudEditor.cs)
-        public static Func<string, bool> EditorLoadScene;     // 장면 파일 경로 → 불러오기 시작했으면 true
-        public static Action<EquipEntry> EditorRecord;        // 플레이 모드를 끝내고 그 설비의 30초 녹화 메뉴 실행
+        public static Func<string, bool> EditorLoadScene;
+        public static Action<EquipEntry> EditorRecord;
+        public static Action EditorQuit;
 
         public static EquipHud Instance { get; private set; }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void ResetStatics() { Instance = null; HudInput.PointerOverUi = false; }
+        static void ResetStatics() { Instance = null; HudInput.PointerOverUi = false; HudInput.Typing = false; }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -55,35 +58,43 @@ namespace EquipFX
         }
 
         // ------------------------------------------------------------------ 상태
-        EquipEntry entry;
-        Component view;
+        EquipEntry entry;              // 애니메이션: 열린 설비 / 배치: 선택한 설비 종류
+        Component view;                // 애니메이션: 장면의 View / 배치: 선택한 모듈의 View
+        LayoutWorld world;             // 배치 모드면 메인 공간
+        PlacedModule selModule;
         float speed = 1f;
         bool paused, loop = true, captionsOn = true, hudVisible = true, recording, loading;
         float clockStart = -1f, ffTarget = -1f, pendingSeek = -1f;
         float nextUiRefresh, toastUntil;
-        bool overTop, overLeft, overRight;
+        bool overTop, overLeft, overDash, overRight, plantDirty = true, marksSet;
         readonly Dictionary<string, Dictionary<string, double>> overrides = new Dictionary<string, Dictionary<string, double>>();
-        readonly List<Vector2> samples = new List<Vector2>();    // (sim t, 누적 처리 건수)
-        readonly List<float> rates = new List<float>();          // 최근 처리량 (/h) 이력
+        readonly List<Vector2> samples = new List<Vector2>();
+        readonly List<float> rates = new List<float>();
         int sceneSerial;
-        bool marksSet;
 
+        bool LayoutMode => world != null;
         float Elapsed => clockStart < 0 ? 0f : Time.time - clockStart;
 
         // ------------------------------------------------------------------ UI 요소
         UIDocument doc;
-        VisualElement root, topBar, leftPanel, rightPanel, leftBody, rightBody, loadingOverlay;
-        Label nameLbl, timeLbl, toastLbl, loadingLbl;
+        VisualElement root, topBar, leftPanel, dashPanel, rightPanel, loadingOverlay, animTools, layoutTools;
+        Label toastLbl, loadingLbl, timeLbl;
         IconButton playBtn;
         TimelineBar timeline;
-        readonly List<Button> speedBtns = new List<Button>();
-        Button camCineBtn, camOrbitBtn, captionBtn, loopBtn, recBtn;
+        Button modeLayoutBtn, modeAnimBtn, camCineBtn, camOrbitBtn, captionBtn, loopBtn, recBtn;
+        DropdownField speedDd, themeDd;
         readonly Dictionary<EquipEntry, VisualElement> cards = new Dictionary<EquipEntry, VisualElement>();
-        // 오른쪽 패널
-        Label catLbl, titleLbl, koLbl, descLbl, tpLbl, tpUnitLbl, recentLbl, chartMaxLbl, simTimeLbl, robotsLbl;
+        // 대시보드
+        VisualElement plantBox, plantTiles, plantList, selDashBox, kpiGrid;
+        Label selDashTitle, tpLbl, tpUnitLbl, recentLbl, chartMaxLbl, simTimeLbl, robotsLbl;
         Sparkline chart;
-        VisualElement kpiGrid, paramBox, specBox, specBody;
         readonly List<(KpiDef def, Label val)> kpiLabels = new List<(KpiDef, Label)>();
+        readonly List<(PlacedModule m, Label val)> plantRows = new List<(PlacedModule, Label)>();
+        readonly Dictionary<string, Label> plantUnitLbls = new Dictionary<string, Label>();
+        Label plantCountLbl, plantRobotLbl;
+        // 속성
+        VisualElement propBody, paramBox, specBox, specBody, moduleBox;
+        Label catLbl, titleLbl, koLbl, descLbl, posLbl;
         readonly List<(ParamDef def, TextField field, FieldInfo fi)> paramFields = new List<(ParamDef, TextField, FieldInfo)>();
 
         // ------------------------------------------------------------------ 시작
@@ -91,10 +102,18 @@ namespace EquipFX
         {
             Instance = this;
             Time.timeScale = 1f;
+            HudStyle.Dark = PlayerPrefs.GetInt(HudStyle.PrefTheme, 0) == 0;
             SceneManager.sceneLoaded += OnSceneLoaded;
             EnsureEventSystem();
-            BuildUi();
-            DetectView();
+            CreateDocument();
+            BuildContent();
+            DetectScene();
+        }
+
+        void Start()
+        {
+            // 설비도 배치 공간도 없는 장면(빈 장면, 실행 파일 첫 장면)에서 시작하면 배치 공간을 엶
+            if (entry == null && world == null && !recording) OpenLayout();
         }
 
         void OnDestroy()
@@ -118,34 +137,68 @@ namespace EquipFX
 #endif
         }
 
-        void OnSceneLoaded(Scene s, LoadSceneMode mode) => DetectView();
+        void OnSceneLoaded(Scene s, LoadSceneMode mode) => DetectScene();
 
-        // 현재 열린 장면에서 라이브러리에 있는 설비를 찾음 (Start 전에 불리므로 바꾼 속성을 여기서 적용)
-        void DetectView()
+        void DetectScene()
         {
+            var w = FindFirstObjectByType<LayoutWorld>();
+            if (w != null) { AttachWorld(w); return; }
+            DetachWorld();
             foreach (var e in EquipCatalog.All)
             {
                 var v = FindFirstObjectByType(e.viewType) as Component;
-                if (v != null) { Attach(e, v); return; }
+                if (v != null && !GetBool(v, "moduleMode", false)) { Attach(e, v); return; }
             }
             if (!loading) { entry = null; view = null; RefreshEntryUi(); }
         }
+
+        void AttachWorld(LayoutWorld w)
+        {
+            if (world == w) return;
+            DetachWorld();
+            world = w;
+            world.SelectionChanged += OnSelectionChanged;
+            world.LayoutChanged += OnLayoutChanged;
+            entry = null; view = null; selModule = null; clockStart = -1f; ffTarget = -1f; pendingSeek = -1f;
+            samples.Clear(); rates.Clear(); plantDirty = true;
+            RefreshEntryUi(); UpdateModeUi(); ApplyTimeScale();
+        }
+
+        void DetachWorld()
+        {
+            if (world == null) return;
+            world.SelectionChanged -= OnSelectionChanged;
+            world.LayoutChanged -= OnLayoutChanged;
+            world = null; selModule = null; plantDirty = true;
+            UpdateModeUi();
+        }
+
+        void OnSelectionChanged()
+        {
+            selModule = world != null ? world.Selected : null;
+            entry = selModule != null ? selModule.entry : null;
+            view = selModule != null ? selModule.view : null;
+            samples.Clear(); rates.Clear();
+            RefreshEntryUi();
+        }
+
+        void OnLayoutChanged() => plantDirty = true;
 
         void Attach(EquipEntry e, Component v)
         {
             bool changed = entry != e;
             entry = e; view = v; clockStart = -1f; marksSet = false;
             samples.Clear(); rates.Clear();
-            SetField(v, "showHud", false);    // 장면별 예전 IMGUI HUD 는 끔 (같은 내용이 오른쪽 대시보드에 있음)
-            ApplyOverrides(e, v);
+            SetField(v, "showHud", false);
+            if (overrides.TryGetValue(e.id, out var map)) ApplyPars(v, map);
             RefreshEntryUi(changed);
+            UpdateModeUi();
             ApplyTimeScale();
         }
 
         // ------------------------------------------------------------------ 매 프레임
         void Update()
         {
-            // 녹화가 시작되면 (각 MovieCapture 가 captureFramerate 를 씀) HUD 를 숨기고 시간 제어를 멈춤
             if (!recording && (Time.captureFramerate > 0 || CaptionPresenter.Recording))
             {
                 recording = true; ffTarget = -1f; pendingSeek = -1f;
@@ -156,41 +209,46 @@ namespace EquipFX
             }
             if (recording) return;
 
+            HudInput.Typing = TypingInField();
             HandleKeys();
 
-            if (view == null && entry != null && !loading) { entry = null; RefreshEntryUi(); }
-
-            if (view != null && entry != null && clockStart < 0 && entry.ready(view))
+            if (LayoutMode)
             {
-                clockStart = Time.time;
-                if (pendingSeek > 0) ffTarget = pendingSeek;
-                pendingSeek = -1f;
-                RefreshTimelineMarks();
-                ApplyTimeScale();
+                if (selModule == null && world.Selected != null) OnSelectionChanged();
+                if (selModule != null && view == null && selModule.view != null) { view = selModule.view; RefreshEntryUi(); }
             }
-
-            // 타임라인 앞으로 이동: 높은 배속으로 정확히 목표 시각까지 진행 (시뮬레이션·카메라·자막이 함께 감)
-            if (ffTarget >= 0 && clockStart >= 0)
+            else
             {
-                float rem = ffTarget - Elapsed;
-                if (rem <= 0.002f) { ffTarget = -1f; ApplyTimeScale(); }
-                else Time.timeScale = Mathf.Clamp(rem / Mathf.Max(Time.unscaledDeltaTime, 1f / 240f), 0.01f, FastForward);
+                if (view == null && entry != null && !loading) { entry = null; RefreshEntryUi(); }
+                if (view != null && entry != null && clockStart < 0 && entry.ready(view))
+                {
+                    clockStart = Time.time;
+                    if (pendingSeek > 0) ffTarget = pendingSeek;
+                    pendingSeek = -1f;
+                    ApplyTimeScale();
+                }
+                if (ffTarget >= 0 && clockStart >= 0)
+                {
+                    float rem = ffTarget - Elapsed;
+                    if (rem <= 0.002f) { ffTarget = -1f; ApplyTimeScale(); }
+                    else Time.timeScale = Mathf.Clamp(rem / Mathf.Max(Time.unscaledDeltaTime, 1f / 240f), 0.01f, FastForward);
+                }
+                else if (loop && !loading && clockStart >= 0 && Elapsed >= MovieLength) Restart(0f);
             }
-            else if (loop && !loading && clockStart >= 0 && Elapsed >= MovieLength)
-                Restart(0f);   // 30초 영상 구간 반복: 장면을 다시 시작해 녹화와 같은 장면을 다시 보여 줌
 
             Sample();
             UpdateUiFast();
             if (Time.unscaledTime >= nextUiRefresh) { nextUiRefresh = Time.unscaledTime + 0.2f; UpdateUiSlow(); }
         }
 
+        bool Ready => view != null && entry != null && entry.ready(view) && (!LayoutMode || (selModule != null && selModule.built));
+
         void Sample()
         {
-            if (view == null || entry == null || clockStart < 0) return;
+            if (!Ready) return;
             float t = (float)entry.simTime(view), done = (float)entry.doneCount(view);
             if (samples.Count > 0 && t - samples[samples.Count - 1].x < 1f) return;
             samples.Add(new Vector2(t, done));
-            // 최근 1분 처리량
             int j = samples.Count - 1;
             while (j > 0 && t - samples[j - 1].x <= RateWindow) j--;
             var a = samples[j];
@@ -203,7 +261,7 @@ namespace EquipFX
         // ------------------------------------------------------------------ 키보드
         void HandleKeys()
         {
-            if (TypingInField()) return;
+            if (HudInput.Typing) return;
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current; if (k == null) return;
             bool h = k.hKey.wasPressedThisFrame, sp = k.spaceKey.wasPressedThisFrame, r = k.rKey.wasPressedThisFrame,
@@ -214,6 +272,7 @@ namespace EquipFX
 #endif
             if (h) SetHudVisible(!hudVisible);
             if (sp) TogglePause();
+            if (LayoutMode) return;
             if (r) Restart(0f);
             if (l) Seek(CurrentTime() - 5f);
             if (rt) Seek(CurrentTime() + 5f);
@@ -232,32 +291,94 @@ namespace EquipFX
         void ApplyTimeScale()
         {
             if (recording) return;
-            if (ffTarget >= 0 || loading) { Time.timeScale = 1f; return; }
+            if (!LayoutMode && (ffTarget >= 0 || loading)) { Time.timeScale = 1f; return; }
             Time.timeScale = paused ? 0f : speed;
         }
 
         void TogglePause() { paused = !paused; ApplyTimeScale(); UpdateControls(); }
 
-        void SetSpeed(float s) { speed = s; if (paused) paused = false; ApplyTimeScale(); UpdateControls(); }
+        void SetSpeed(float s) { speed = s; paused = false; ApplyTimeScale(); UpdateControls(); }
 
         public void Seek(float t)
         {
-            if (entry == null) return;
+            if (entry == null || LayoutMode) return;
             t = Mathf.Clamp(t, 0f, MovieLength - 0.05f);
             if (clockStart >= 0 && !loading && t >= Elapsed) { ffTarget = t; return; }
-            Restart(t);   // 뒤로 가기: 처음부터 다시 만들어 그 시각까지 빠르게 진행 (시뮬레이션이 결정적이라 같은 장면)
+            Restart(t);
         }
 
         public void Restart(float seekTo)
         {
-            if (entry == null || loading) return;
+            if (entry == null || loading || LayoutMode) return;
             StartCoroutine(LoadRoutine(entry, seekTo));
         }
 
-        public void Open(EquipEntry e)
+        public void OpenAnimation(EquipEntry e)
         {
             if (e == null || loading) return;
             StartCoroutine(LoadRoutine(e, 0f));
+        }
+
+        public void OpenLayout()
+        {
+            if (loading || LayoutMode) return;
+            StartCoroutine(LayoutRoutine());
+        }
+
+        void ShowLoading(string msg)
+        {
+            loadingLbl.text = msg;
+            loadingOverlay.style.display = DisplayStyle.Flex;
+        }
+
+        // 새 빈 장면을 만들어 활성화하고 나머지 장면은 내림
+        IEnumerator FreshScene(string name)
+        {
+            var s = SceneManager.CreateScene($"{name} (HUD {++sceneSerial})");
+            SceneManager.SetActiveScene(s);
+            for (int i = SceneManager.sceneCount - 1; i >= 0; i--)
+            {
+                var sc = SceneManager.GetSceneAt(i);
+                if (sc == s || !sc.isLoaded) continue;
+                var op = SceneManager.UnloadSceneAsync(sc);
+                while (op != null && !op.isDone) yield return null;
+            }
+        }
+
+        bool LoadSceneFile(string path)
+        {
+            if (Application.isEditor) return EditorLoadScene != null && EditorLoadScene(path);
+            if (SceneUtility.GetBuildIndexByScenePath(path) < 0) return false;
+            SceneManager.LoadSceneAsync(path, LoadSceneMode.Single);
+            return true;
+        }
+
+        IEnumerator LayoutRoutine()
+        {
+            loading = true; ffTarget = -1f; pendingSeek = -1f; view = null; entry = null;
+            ShowLoading("배치 공간 여는 중…");
+            Time.timeScale = 1f;
+            yield return null;
+            bool viaFile = LoadSceneFile(LayoutWorld.ScenePath);
+            if (viaFile)
+            {
+                float until = Time.unscaledTime + 15f;
+                while (world == null && Time.unscaledTime < until) yield return null;
+                if (world == null) viaFile = false;
+            }
+            if (!viaFile)
+            {
+                yield return StartCoroutine(FreshScene("LayoutSpace"));
+                var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
+                camGo.AddComponent<Camera>(); camGo.AddComponent<AudioListener>();
+                var w = new GameObject("LayoutWorld").AddComponent<LayoutWorld>();
+                AttachWorld(w);
+            }
+            Resources.UnloadUnusedAssets();
+            loading = false;
+            loadingOverlay.style.display = DisplayStyle.None;
+            ApplyTimeScale(); UpdateModeUi(); UpdateControls();
+            if (world != null && world.modules.Count == 0) Toast("왼쪽 라이브러리에서 설비를 끌어다 바닥에 놓으세요");
         }
 
         IEnumerator LoadRoutine(EquipEntry e, float seekTo)
@@ -268,14 +389,10 @@ namespace EquipFX
             entry = e;
             if (changed) RefreshEntryUi(true);
             ApplyTimeScale();
-            loadingLbl.text = $"{e.name} 불러오는 중…";
-            loadingOverlay.style.display = DisplayStyle.Flex;
-            yield return null;   // 안내 문구를 먼저 그림
+            ShowLoading($"{e.name} 불러오는 중…");
+            yield return null;
 
-            bool viaFile = false;
-            if (Application.isEditor) viaFile = EditorLoadScene != null && EditorLoadScene(e.scenePath);
-            else if (SceneUtility.GetBuildIndexByScenePath(e.scenePath) >= 0) { SceneManager.LoadSceneAsync(e.scenePath, LoadSceneMode.Single); viaFile = true; }
-
+            bool viaFile = LoadSceneFile(e.scenePath);
             if (viaFile)
             {
                 float until = Time.unscaledTime + 15f;
@@ -284,35 +401,25 @@ namespace EquipFX
             }
             if (!viaFile)
             {
-                // 장면 파일이 없으면 각 설비 메뉴의 Create Scene 과 같은 구성을 코드로 만듦 (카메라 + 설비 루트)
-                var s = SceneManager.CreateScene($"{e.rootName} (HUD {++sceneSerial})");
-                SceneManager.SetActiveScene(s);
-                for (int i = SceneManager.sceneCount - 1; i >= 0; i--)
-                {
-                    var sc = SceneManager.GetSceneAt(i);
-                    if (sc == s || !sc.isLoaded) continue;
-                    var op = SceneManager.UnloadSceneAsync(sc);
-                    while (op != null && !op.isDone) yield return null;
-                }
+                DetachWorld();
+                yield return StartCoroutine(FreshScene(e.rootName));
                 var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
                 camGo.AddComponent<Camera>(); camGo.AddComponent<AudioListener>();
                 var rootGo = new GameObject(e.rootName);
                 var v = rootGo.AddComponent(e.viewType);
                 if (e.captureType != null) rootGo.AddComponent(e.captureType);
                 Attach(e, v);
-                if (Application.isEditor) Toast("장면 파일이 없어 코드로 만들었습니다 (메뉴 애니메이션 > 통합 HUD > 모든 설비 장면 만들기)");
             }
             Resources.UnloadUnusedAssets();
             loading = false;
             loadingOverlay.style.display = DisplayStyle.None;
-            ApplyTimeScale();
-            UpdateControls();
+            ApplyTimeScale(); UpdateModeUi(); UpdateControls();
         }
 
-        // ------------------------------------------------------------------ 카메라 · 자막
+        // ------------------------------------------------------------------ 카메라 · 자막 · HUD
         void SetCinematic(bool on)
         {
-            if (view == null) return;
+            if (view == null || LayoutMode) return;
             SetField(view, "cinematicCamera", on);
             UpdateControls();
         }
@@ -320,7 +427,7 @@ namespace EquipFX
         void SetCaptions(bool on)
         {
             captionsOn = on;
-            if (view != null) { SetField(view, "showCaption", on); SetField(view, "showCaptions", on); }
+            if (view != null && !LayoutMode) { SetField(view, "showCaption", on); SetField(view, "showCaptions", on); }
             foreach (var cp in FindObjectsByType<CaptionPresenter>(FindObjectsSortMode.None)) cp.show = on;
         }
 
@@ -328,14 +435,30 @@ namespace EquipFX
         {
             hudVisible = on;
             root.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
-            if (!on) { overTop = overLeft = overRight = false; HudInput.PointerOverUi = false; }
-            else Toast("H: HUD 숨기기 · Space: 재생/일시정지 · R: 처음부터 · ←/→: 5초 이동 · C: 카메라");
+            if (!on) { overTop = overLeft = overDash = overRight = false; HudInput.PointerOverUi = false; }
+            else Toast("H: HUD 숨기기 · Space: 재생/일시정지");
+        }
+
+        void SetTheme(bool dark)
+        {
+            if (HudStyle.Dark == dark) return;
+            HudStyle.Dark = dark;
+            PlayerPrefs.SetInt(HudStyle.PrefTheme, dark ? 0 : 1); PlayerPrefs.Save();
+            // 색이 바뀌므로 HUD 를 다시 만듦 (상태는 그대로)
+            BuildContent();
+            RefreshEntryUi(); UpdateModeUi(); UpdateControls();
+        }
+
+        void Quit()
+        {
+            if (Application.isEditor) EditorQuit?.Invoke();
+            else Application.Quit();
         }
 
         // ------------------------------------------------------------------ 속성 변경
-        void ApplyOverrides(EquipEntry e, Component v)
+        public static void ApplyPars(Component v, Dictionary<string, double> map)
         {
-            if (!overrides.TryGetValue(e.id, out var map)) return;
+            if (v == null || map == null) return;
             var cfg = GetConfig(v);
             foreach (var kv in map)
             {
@@ -346,9 +469,8 @@ namespace EquipFX
             }
         }
 
-        void ApplyParams()
+        Dictionary<string, double> ReadParams()
         {
-            if (entry == null) return;
             var map = new Dictionary<string, double>();
             foreach (var (def, field, fi) in paramFields)
             {
@@ -358,6 +480,20 @@ namespace EquipFX
                 if (fi.FieldType == typeof(int)) d = Math.Round(d);
                 map[def.field] = d;
             }
+            return map;
+        }
+
+        void ApplyParams()
+        {
+            if (entry == null) return;
+            var map = ReadParams();
+            if (LayoutMode)
+            {
+                if (selModule == null || !selModule.built) return;
+                Toast($"{selModule.Label} 를 새 속성으로 다시 만듭니다");
+                world.Rebuild(selModule, map);
+                return;
+            }
             overrides[entry.id] = map;
             Toast("속성을 적용했습니다. 처음부터 다시 시작합니다 (시네마틱 샷은 기본값 기준이라 어긋날 수 있습니다)");
             Restart(0f);
@@ -366,6 +502,12 @@ namespace EquipFX
         void ResetParams()
         {
             if (entry == null) return;
+            if (LayoutMode)
+            {
+                if (selModule == null || !selModule.built) return;
+                world.Rebuild(selModule, new Dictionary<string, double>());
+                return;
+            }
             overrides.Remove(entry.id);
             Toast("기본값으로 되돌려 다시 시작합니다");
             Restart(0f);
@@ -393,8 +535,8 @@ namespace EquipFX
             return f != null && f.FieldType == typeof(bool) ? (bool)f.GetValue(o) : fallback;
         }
 
-        // ------------------------------------------------------------------ UI 만들기
-        void BuildUi()
+        // ================================================================== UI 만들기
+        void CreateDocument()
         {
             var ps = ScriptableObject.CreateInstance<PanelSettings>();
             ps.themeStyleSheet = Resources.Load<ThemeStyleSheet>("EquipHudTheme");
@@ -403,15 +545,20 @@ namespace EquipFX
             ps.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
             ps.match = 1f;
             ps.sortingOrder = 100;
-
             var uiGo = new GameObject("HUD UI");
             uiGo.SetActive(false);
             uiGo.transform.SetParent(transform, false);
             doc = uiGo.AddComponent<UIDocument>();
             doc.panelSettings = ps;
             uiGo.SetActive(true);
+        }
 
+        void BuildContent()
+        {
             var docRoot = doc.rootVisualElement;
+            docRoot.Clear();
+            cards.Clear(); kpiLabels.Clear(); plantRows.Clear(); plantUnitLbls.Clear(); paramFields.Clear();
+            overTop = overLeft = overDash = overRight = false; HudInput.PointerOverUi = false;
             docRoot.pickingMode = PickingMode.Ignore;
             var font = HudFont.Get();
             if (font.HasValue) docRoot.style.unityFontDefinition = font.Value;
@@ -419,21 +566,23 @@ namespace EquipFX
             root = new VisualElement { pickingMode = PickingMode.Ignore };
             root.style.position = Position.Absolute; root.style.left = 0; root.style.right = 0; root.style.top = 0; root.style.bottom = 0;
             root.style.flexDirection = FlexDirection.Column;
+            root.style.display = hudVisible && !recording ? DisplayStyle.Flex : DisplayStyle.None;
             docRoot.Add(root);
 
             BuildTopBar();
-
             var body = new VisualElement { pickingMode = PickingMode.Ignore };
-            body.style.flexGrow = 1; body.style.flexDirection = FlexDirection.Row; body.style.justifyContent = Justify.SpaceBetween;
-            HudStyle.Pad(body, 10, 12);
+            body.style.flexGrow = 1; body.style.flexDirection = FlexDirection.Row;
+            HudStyle.Pad(body, 12, 12);
             root.Add(body);
             BuildLeftPanel(body);
+            var spacer = new VisualElement { pickingMode = PickingMode.Ignore }; spacer.style.flexGrow = 1;
+            body.Add(spacer);
+            BuildDashPanel(body);
             BuildRightPanel(body);
 
-            // 안내 문구 · 불러오는 중
-            toastLbl = HudStyle.MakeLabel("", 14, HudStyle.Text);
-            toastLbl.style.position = Position.Absolute; toastLbl.style.bottom = 22; toastLbl.style.alignSelf = Align.Center;
-            toastLbl.style.backgroundColor = HudStyle.Panel; HudStyle.Pad(toastLbl, 8, 14); HudStyle.Radius(toastLbl, 8);
+            toastLbl = HudStyle.MakeLabel("", 13, HudStyle.Text);
+            toastLbl.style.position = Position.Absolute; toastLbl.style.bottom = 24; toastLbl.style.alignSelf = Align.Center;
+            toastLbl.style.backgroundColor = HudStyle.Panel; HudStyle.Pad(toastLbl, 10, 16); HudStyle.Radius(toastLbl, 20);
             toastLbl.style.display = DisplayStyle.None;
             root.Add(toastLbl);
 
@@ -441,49 +590,64 @@ namespace EquipFX
             loadingOverlay.style.position = Position.Absolute; loadingOverlay.style.left = 0; loadingOverlay.style.right = 0;
             loadingOverlay.style.top = 0; loadingOverlay.style.bottom = 0;
             loadingOverlay.style.alignItems = Align.Center; loadingOverlay.style.justifyContent = Justify.Center;
-            loadingLbl = HudStyle.MakeLabel("", 22, Color.white, true);
-            loadingLbl.style.backgroundColor = HudStyle.Panel; HudStyle.Pad(loadingLbl, 14, 22); HudStyle.Radius(loadingLbl, 10);
+            loadingLbl = HudStyle.MakeLabel("", 18, HudStyle.Strong, true);
+            loadingLbl.style.backgroundColor = HudStyle.Panel; HudStyle.Pad(loadingLbl, 14, 24); HudStyle.Radius(loadingLbl, 14);
             loadingOverlay.Add(loadingLbl);
-            loadingOverlay.style.display = DisplayStyle.None;
+            loadingOverlay.style.display = loading ? DisplayStyle.Flex : DisplayStyle.None;
             docRoot.Add(loadingOverlay);
 
-            Hover(topBar, b => overTop = b); Hover(leftPanel, b => overLeft = b); Hover(rightPanel, b => overRight = b);
+            Hover(topBar, b => overTop = b); Hover(leftPanel, b => overLeft = b);
+            Hover(dashPanel, b => overDash = b); Hover(rightPanel, b => overRight = b);
+            plantDirty = true;
+            UpdateModeUi();
             UpdateControls();
-            Toast("H: HUD 숨기기 · Space: 재생/일시정지 · R: 처음부터 · ←/→: 5초 이동 · C: 카메라");
         }
 
         void Hover(VisualElement e, Action<bool> set)
         {
-            e.RegisterCallback<PointerEnterEvent>(_ => { set(true); HudInput.PointerOverUi = overTop || overLeft || overRight; });
-            e.RegisterCallback<PointerLeaveEvent>(_ => { set(false); HudInput.PointerOverUi = overTop || overLeft || overRight; });
+            void Upd() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight;
+            e.RegisterCallback<PointerEnterEvent>(_ => { set(true); Upd(); });
+            e.RegisterCallback<PointerLeaveEvent>(_ => { set(false); Upd(); });
         }
 
         static VisualElement Panel()
         {
             var p = new VisualElement();
-            p.style.backgroundColor = HudStyle.Panel; HudStyle.Radius(p, 12); HudStyle.Border(p, 1, HudStyle.PanelLine);
+            p.style.backgroundColor = HudStyle.Panel; HudStyle.Radius(p, 14);
             return p;
         }
 
-        static VisualElement Row(float gap = 0)
+        static VisualElement Row()
         {
             var r = new VisualElement { pickingMode = PickingMode.Ignore };
             r.style.flexDirection = FlexDirection.Row; r.style.alignItems = Align.Center;
             return r;
         }
 
-        static VisualElement Divider()
+        static VisualElement Gap(float w)
         {
             var d = new VisualElement { pickingMode = PickingMode.Ignore };
-            d.style.width = 1; d.style.height = 30; d.style.backgroundColor = HudStyle.PanelLine; HudStyle.Margin(d, 0, 8, 0, 8);
+            d.style.width = w; d.style.flexShrink = 0;
             return d;
         }
 
         static Label SectionTitle(string t)
         {
-            var l = HudStyle.MakeLabel(t, 12, HudStyle.Muted, true);
-            l.style.letterSpacing = 1.5f; HudStyle.Margin(l, 14, 0, 8, 0);
+            var l = HudStyle.MakeLabel(t, 11, HudStyle.Muted, true);
+            l.style.letterSpacing = 0.8f; HudStyle.Margin(l, 18, 0, 8, 0);
             return l;
+        }
+
+        static void StyleDropdown(DropdownField dd, float width)
+        {
+            dd.style.width = width; dd.style.height = 32; HudStyle.Margin(dd, 0, 2, 0, 2);
+            var input = dd.Q(className: DropdownField.inputUssClassName);
+            if (input != null)
+            {
+                input.style.backgroundColor = HudStyle.Tile; HudStyle.Border(input, 0, Color.clear); HudStyle.Radius(input, 8);
+                input.style.color = HudStyle.Text; HudStyle.Pad(input, 0, 10);
+            }
+            dd.Query<TextElement>().ForEach(t => { t.style.color = HudStyle.Text; t.style.fontSize = 13; });
         }
 
         // ---------------------------------------------------------------- 위쪽 막대
@@ -491,181 +655,283 @@ namespace EquipFX
         {
             topBar = Panel();
             topBar.style.flexDirection = FlexDirection.Row; topBar.style.alignItems = Align.Center;
-            topBar.style.height = 64; HudStyle.Margin(topBar, 12, 12, 0, 12); HudStyle.Pad(topBar, 0, 14);
+            topBar.style.height = 56; HudStyle.Margin(topBar, 12, 12, 0, 12); HudStyle.Pad(topBar, 0, 12);
             root.Add(topBar);
 
-            var brand = new VisualElement { pickingMode = PickingMode.Ignore };
-            brand.style.width = 250; brand.style.flexShrink = 0;
-            var tag = HudStyle.MakeLabel("EQUIPMENT ANIMATION", 10, HudStyle.Accent, true); tag.style.letterSpacing = 2f;
-            nameLbl = HudStyle.MakeLabel("설비를 고르세요", 18, Color.white, true);
-            nameLbl.style.overflow = Overflow.Hidden; nameLbl.style.textOverflow = TextOverflow.Ellipsis;
-            brand.Add(tag); brand.Add(nameLbl);
+            // 브랜드 + 모드
+            var dot = new VisualElement { pickingMode = PickingMode.Ignore };
+            dot.style.width = 10; dot.style.height = 10; dot.style.backgroundColor = HudStyle.Accent; HudStyle.Radius(dot, 5);
+            HudStyle.Margin(dot, 0, 10, 0, 4);
+            topBar.Add(dot);
+            var brand = HudStyle.MakeLabel("Equipment Studio", 15, HudStyle.Strong, true);
             topBar.Add(brand);
-            topBar.Add(Divider());
+            topBar.Add(Gap(18));
+            var seg = Row(); seg.pickingMode = PickingMode.Position;
+            seg.style.backgroundColor = HudStyle.Tile; HudStyle.Radius(seg, 10); HudStyle.Pad(seg, 3, 3);
+            modeLayoutBtn = HudStyle.MakeButton("배치", OpenLayout, 64);
+            modeAnimBtn = HudStyle.MakeButton("애니메이션", () => OpenAnimation(entry ?? EquipCatalog.All[0]), 88);
+            foreach (var b in new[] { modeLayoutBtn, modeAnimBtn }) { b.style.height = 28; HudStyle.Margin(b, 0, 0, 0, 0); seg.Add(b); }
+            topBar.Add(seg);
+            topBar.Add(Gap(18));
 
-            topBar.Add(new IconButton(IconButton.Kind.Restart, 34, () => Restart(0f)));
-            topBar.Add(new IconButton(IconButton.Kind.Back, 34, () => Seek(CurrentTime() - 5f)));
-            playBtn = new IconButton(IconButton.Kind.Pause, 44, TogglePause, true);
+            // 재생
+            playBtn = new IconButton(IconButton.Kind.Pause, 36, TogglePause, true);
             topBar.Add(playBtn);
-            topBar.Add(new IconButton(IconButton.Kind.Forward, 34, () => Seek(CurrentTime() + 5f)));
-            topBar.Add(Divider());
+            speedDd = new DropdownField(new List<string> { "0.25×", "0.5×", "1×", "2×", "4×", "8×" }, 2);
+            speedDd.RegisterValueChangedCallback(ev => { int i = speedDd.index; if (i >= 0 && i < Speeds.Length) SetSpeed(Speeds[i]); });
+            StyleDropdown(speedDd, 80);
+            speedDd.SetValueWithoutNotify(SpeedLabel(speed));
+            topBar.Add(speedDd);
+            topBar.Add(Gap(8));
 
-            var speedLbl = HudStyle.MakeLabel("속도", 12, HudStyle.Muted); HudStyle.Margin(speedLbl, 0, 4, 0, 0);
-            topBar.Add(speedLbl);
-            foreach (var s in Speeds)
-            {
-                float sv = s;
-                var b = HudStyle.MakeButton(s < 1 ? $"{s:0.##}×" : $"{s:0}×", () => SetSpeed(sv), 40);
-                HudStyle.Margin(b, 0, 2, 0, 2); HudStyle.Pad(b, 0, 6);
-                speedBtns.Add(b); topBar.Add(b);
-            }
-            topBar.Add(Divider());
-
+            // 애니메이션 도구
+            animTools = Row(); animTools.style.flexGrow = 1; animTools.pickingMode = PickingMode.Position;
+            animTools.Add(new IconButton(IconButton.Kind.Restart, 32, () => Restart(0f)));
+            animTools.Add(new IconButton(IconButton.Kind.Back, 32, () => Seek(CurrentTime() - 5f)));
+            animTools.Add(new IconButton(IconButton.Kind.Forward, 32, () => Seek(CurrentTime() + 5f)));
             timeline = new TimelineBar { length = MovieLength };
             timeline.onSeek = Seek;
-            topBar.Add(timeline);
-            timeLbl = HudStyle.MakeLabel("0.0 / 30 s", 13, HudStyle.Text);
-            timeLbl.style.width = 92; timeLbl.style.unityTextAlign = TextAnchor.MiddleRight; timeLbl.style.flexShrink = 0;
-            topBar.Add(timeLbl);
-            topBar.Add(Divider());
-
+            animTools.Add(timeline);
+            timeLbl = HudStyle.MakeLabel("0.0 / 30 s", 12, HudStyle.Muted);
+            timeLbl.style.width = 88; timeLbl.style.unityTextAlign = TextAnchor.MiddleRight; timeLbl.style.flexShrink = 0;
+            animTools.Add(timeLbl);
+            animTools.Add(Gap(10));
             camCineBtn = HudStyle.MakeButton("시네마틱", () => SetCinematic(true));
             camOrbitBtn = HudStyle.MakeButton("자유 시점", () => SetCinematic(false));
-            HudStyle.Margin(camCineBtn, 0, 0, 0, 0); HudStyle.Margin(camOrbitBtn, 0, 0, 0, 2);
-            topBar.Add(camCineBtn); topBar.Add(camOrbitBtn);
-            topBar.Add(Divider());
             captionBtn = HudStyle.MakeButton("자막", () => { SetCaptions(!captionsOn); UpdateControls(); });
-            loopBtn = HudStyle.MakeButton("30초 반복", () => { loop = !loop; UpdateControls(); });
-            topBar.Add(captionBtn); topBar.Add(loopBtn);
+            loopBtn = HudStyle.MakeButton("반복", () => { loop = !loop; UpdateControls(); });
+            animTools.Add(camCineBtn); animTools.Add(camOrbitBtn); animTools.Add(Gap(6)); animTools.Add(captionBtn); animTools.Add(loopBtn);
             if (Application.isEditor)
             {
-                recBtn = HudStyle.MakeButton("● 30초 녹화", () => { if (entry != null) EditorRecord?.Invoke(entry); });
+                recBtn = HudStyle.MakeButton("● 녹화", () => { if (entry != null) EditorRecord?.Invoke(entry); });
                 recBtn.style.color = HudStyle.Rec;
-                topBar.Add(recBtn);
+                animTools.Add(recBtn);
             }
-            var hide = HudStyle.MakeButton("HUD 숨김 (H)", () => SetHudVisible(false));
+            topBar.Add(animTools);
+
+            // 배치 도구
+            layoutTools = Row(); layoutTools.style.flexGrow = 1; layoutTools.pickingMode = PickingMode.Position;
+            var hint = HudStyle.MakeLabel("끌어다 놓기 · 클릭 선택 · 끌어서 이동 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 휠 확대", 12, HudStyle.Muted);
+            hint.style.flexGrow = 1; hint.style.overflow = Overflow.Hidden; hint.style.textOverflow = TextOverflow.Ellipsis;
+            layoutTools.Add(hint);
+            layoutTools.Add(HudStyle.MakeButton("모두 지우기", () => world?.ClearAll()));
+            topBar.Add(layoutTools);
+
+            // 오른쪽: 테마 · 숨김 · 닫기
+            topBar.Add(Gap(10));
+            themeDd = new DropdownField(new List<string> { "다크", "라이트" }, HudStyle.Dark ? 0 : 1);
+            themeDd.RegisterValueChangedCallback(ev => SetTheme(themeDd.index == 0));
+            StyleDropdown(themeDd, 92);
+            topBar.Add(themeDd);
+            var hide = new IconButton(IconButton.Kind.Hide, 32, () => SetHudVisible(false));
             topBar.Add(hide);
+            var close = new IconButton(IconButton.Kind.Close, 32, Quit) { hoverBg = HudStyle.Rec };
+            topBar.Add(close);
         }
+
+        static string SpeedLabel(float s) => s < 1 ? $"{s:0.##}×" : $"{s:0}×";
 
         // ---------------------------------------------------------------- 왼쪽: 라이브러리
         void BuildLeftPanel(VisualElement body)
         {
             leftPanel = Panel();
-            leftPanel.style.width = 300; leftPanel.style.flexShrink = 0; HudStyle.Pad(leftPanel, 14, 14);
+            leftPanel.style.width = 280; leftPanel.style.flexShrink = 0; HudStyle.Pad(leftPanel, 16, 14);
             body.Add(leftPanel);
 
             var head = Row();
-            var t = HudStyle.MakeLabel("솔루션 라이브러리", 16, Color.white, true); t.style.flexGrow = 1;
-            var count = HudStyle.MakeLabel($"{EquipCatalog.All.Count}종", 12, HudStyle.Muted);
-            var fold = HudStyle.MakeButton("접기", null); fold.style.height = 24; HudStyle.Pad(fold, 0, 8); fold.style.fontSize = 11;
-            head.Add(t); head.Add(count); head.Add(fold);
+            var t = HudStyle.MakeLabel("라이브러리", 15, HudStyle.Strong, true); t.style.flexGrow = 1;
+            var count = HudStyle.MakeLabel($"{EquipCatalog.All.Count}", 12, HudStyle.Muted);
+            head.Add(t); head.Add(count);
             leftPanel.Add(head);
+            var sub = HudStyle.MakeLabel("끌어서 바닥에 설치", 12, HudStyle.Muted); HudStyle.Margin(sub, 2, 0, 0, 0);
+            leftPanel.Add(sub);
 
-            leftBody = new ScrollView(ScrollViewMode.Vertical);
-            ((ScrollView)leftBody).horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            leftBody.style.flexGrow = 1; HudStyle.Margin(leftBody, 8, 0, 0, 0);
-            leftPanel.Add(leftBody);
-            fold.clicked += () => Fold(leftPanel, leftBody, fold, 300);
-
+            var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
+            sv.style.flexGrow = 1; HudStyle.Margin(sv, 6, 0, 0, 0);
+            leftPanel.Add(sv);
             string lastCat = null;
             foreach (var e in EquipCatalog.All)
             {
                 string cat = e.category.Split('·')[0].Trim();
-                if (cat != lastCat) { leftBody.Add(SectionTitle(cat)); lastCat = cat; }
-                leftBody.Add(MakeCard(e));
+                if (cat != lastCat) { sv.Add(SectionTitle(cat)); lastCat = cat; }
+                sv.Add(MakeCard(e));
             }
-            var hint = HudStyle.MakeLabel("누르면 그 설비 장면으로 바뀝니다. 장면 파일이 없으면 코드로 만듭니다.", 11, HudStyle.Muted);
-            hint.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(hint, 12, 0, 4, 0);
-            leftBody.Add(hint);
-        }
-
-        static void Fold(VisualElement panel, VisualElement content, Button btn, float width)
-        {
-            bool open = content.style.display != DisplayStyle.None;
-            content.style.display = open ? DisplayStyle.None : DisplayStyle.Flex;
-            panel.style.width = open ? StyleKeyword.Auto : (StyleLength)width;
-            panel.style.alignSelf = open ? Align.FlexStart : Align.Stretch;
-            btn.text = open ? "펼치기" : "접기";
         }
 
         VisualElement MakeCard(EquipEntry e)
         {
             var c = new VisualElement();
-            c.style.backgroundColor = HudStyle.Tile; HudStyle.Radius(c, 8); HudStyle.Pad(c, 9, 12); HudStyle.Margin(c, 0, 0, 6, 0);
-            HudStyle.Border(c, 1, Color.clear);
-            var n = HudStyle.MakeLabel(e.name, 14, Color.white, true);
-            var k = HudStyle.MakeLabel(e.korean, 12, HudStyle.Muted);
-            k.style.whiteSpace = WhiteSpace.Normal;
-            c.Add(n); c.Add(k);
-            c.RegisterCallback<PointerEnterEvent>(_ => { if (entry != e) c.style.backgroundColor = HudStyle.TileHover; });
-            c.RegisterCallback<PointerLeaveEvent>(_ => { if (entry != e) c.style.backgroundColor = HudStyle.Tile; });
-            c.RegisterCallback<ClickEvent>(_ => Open(e));
+            c.style.flexDirection = FlexDirection.Row; c.style.alignItems = Align.Center;
+            c.style.backgroundColor = Color.clear; HudStyle.Radius(c, 10); HudStyle.Pad(c, 8, 10); HudStyle.Margin(c, 0, 0, 2, 0);
+            var txt = new VisualElement { pickingMode = PickingMode.Ignore }; txt.style.flexGrow = 1; txt.style.flexShrink = 1;
+            var n = HudStyle.MakeLabel(e.name, 13, HudStyle.Strong, true);
+            var k = HudStyle.MakeLabel(e.korean, 11, HudStyle.Muted); k.style.whiteSpace = WhiteSpace.Normal;
+            txt.Add(n); txt.Add(k);
+            c.Add(txt);
+            // 애니메이션으로 보기
+            var play = new IconButton(IconButton.Kind.Play, 26, () => OpenAnimation(e));
+            play.tooltip = "30초 애니메이션 보기";
+            play.RegisterCallback<PointerDownEvent>(ev => ev.StopPropagation());
+            c.Add(play);
+            c.RegisterCallback<PointerEnterEvent>(_ => { if (!IsCurrent(e)) c.style.backgroundColor = HudStyle.TileHover; });
+            c.RegisterCallback<PointerLeaveEvent>(_ => { if (!IsCurrent(e)) c.style.backgroundColor = Color.clear; });
+            c.RegisterCallback<PointerDownEvent>(ev =>
+            {
+                if (ev.button != 0) return;
+                if (LayoutMode && world != null) { world.BeginDrag(e); Toast($"{e.name}: 바닥에 놓으세요 (Esc 취소)"); }
+            });
+            c.RegisterCallback<ClickEvent>(_ => { if (!LayoutMode) OpenAnimation(e); });
             cards[e] = c;
             return c;
         }
 
-        // ---------------------------------------------------------------- 오른쪽: 속성 · 대시보드
-        void BuildRightPanel(VisualElement body)
+        bool IsCurrent(EquipEntry e) => entry == e;
+
+        // ---------------------------------------------------------------- 대시보드 (속성 패널 왼쪽)
+        void BuildDashPanel(VisualElement body)
         {
-            rightPanel = Panel();
-            rightPanel.style.width = 360; rightPanel.style.flexShrink = 0; HudStyle.Pad(rightPanel, 14, 14);
-            body.Add(rightPanel);
-
-            var head = Row();
-            catLbl = HudStyle.MakeLabel("", 11, HudStyle.Accent, true); catLbl.style.letterSpacing = 1.5f; catLbl.style.flexGrow = 1;
-            var fold = HudStyle.MakeButton("접기", null); fold.style.height = 24; HudStyle.Pad(fold, 0, 8); fold.style.fontSize = 11;
-            head.Add(catLbl); head.Add(fold);
-            rightPanel.Add(head);
-
+            dashPanel = Panel();
+            dashPanel.style.width = 300; dashPanel.style.flexShrink = 0; HudStyle.Pad(dashPanel, 16, 14); HudStyle.Margin(dashPanel, 0, 10, 0, 0);
+            body.Add(dashPanel);
+            var t = HudStyle.MakeLabel("대시보드", 15, HudStyle.Strong, true);
+            dashPanel.Add(t);
             var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
             sv.style.flexGrow = 1;
-            rightBody = sv;
-            rightPanel.Add(sv);
-            fold.clicked += () => Fold(rightPanel, rightBody, fold, 360);
+            dashPanel.Add(sv);
 
-            titleLbl = HudStyle.MakeLabel("", 22, Color.white, true); titleLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(titleLbl, 4, 0, 0, 0);
-            koLbl = HudStyle.MakeLabel("", 13, HudStyle.Text); koLbl.style.whiteSpace = WhiteSpace.Normal;
-            descLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted); descLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(descLbl, 6, 0, 0, 0);
-            sv.Add(titleLbl); sv.Add(koLbl); sv.Add(descLbl);
+            // 공장 전체 (배치 모드)
+            plantBox = new VisualElement { pickingMode = PickingMode.Ignore };
+            plantBox.Add(SectionTitle("공장 전체"));
+            plantTiles = new VisualElement { pickingMode = PickingMode.Ignore };
+            plantTiles.style.flexDirection = FlexDirection.Row; plantTiles.style.flexWrap = Wrap.Wrap; plantTiles.style.justifyContent = Justify.SpaceBetween;
+            plantBox.Add(plantTiles);
+            plantBox.Add(SectionTitle("설치된 설비"));
+            plantList = new VisualElement();
+            plantBox.Add(plantList);
+            sv.Add(plantBox);
 
-            // 대시보드
-            sv.Add(SectionTitle("대시보드"));
-            var hero = new VisualElement(); hero.style.backgroundColor = HudStyle.Tile; HudStyle.Radius(hero, 10); HudStyle.Pad(hero, 12, 14);
-            var heroTop = Row();
-            heroTop.style.alignItems = Align.FlexEnd;
-            tpLbl = HudStyle.MakeLabel("—", 34, Color.white, true);
-            tpUnitLbl = HudStyle.MakeLabel("", 13, HudStyle.Muted); HudStyle.Margin(tpUnitLbl, 0, 0, 7, 6);
+            // 선택한 설비
+            selDashBox = new VisualElement { pickingMode = PickingMode.Ignore };
+            selDashTitle = SectionTitle("선택한 설비");
+            selDashBox.Add(selDashTitle);
+            var hero = new VisualElement { pickingMode = PickingMode.Ignore };
+            hero.style.backgroundColor = HudStyle.Tile; HudStyle.Radius(hero, 12); HudStyle.Pad(hero, 12, 14);
+            var heroTop = Row(); heroTop.style.alignItems = Align.FlexEnd;
+            tpLbl = HudStyle.MakeLabel("—", 30, HudStyle.Strong, true);
+            tpUnitLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted); HudStyle.Margin(tpUnitLbl, 0, 0, 6, 6);
             heroTop.Add(tpLbl); heroTop.Add(tpUnitLbl);
-            var heroCap = HudStyle.MakeLabel("처리량 (누적 평균)", 12, HudStyle.Muted);
-            recentLbl = HudStyle.MakeLabel("최근 1분 —", 12, HudStyle.Accent); HudStyle.Margin(recentLbl, 2, 0, 8, 0);
+            var heroCap = HudStyle.MakeLabel("처리량 (누적 평균)", 11, HudStyle.Muted);
+            recentLbl = HudStyle.MakeLabel("최근 1분 —", 12, HudStyle.Accent, true); HudStyle.Margin(recentLbl, 4, 0, 8, 0);
             var chartWrap = new VisualElement { pickingMode = PickingMode.Ignore };
             chart = new Sparkline();
             chartMaxLbl = HudStyle.MakeLabel("", 10, HudStyle.Muted);
             chartMaxLbl.style.position = Position.Absolute; chartMaxLbl.style.left = 2; chartMaxLbl.style.top = -2;
             chartWrap.Add(chart); chartWrap.Add(chartMaxLbl);
-            var chartCap = HudStyle.MakeLabel("최근 1분 처리량 추이 (시뮬레이션 시간 3분)", 10, HudStyle.Muted); HudStyle.Margin(chartCap, 4, 0, 0, 0);
-            hero.Add(heroTop); hero.Add(heroCap); hero.Add(recentLbl); hero.Add(chartWrap); hero.Add(chartCap);
-            sv.Add(hero);
-
+            hero.Add(heroTop); hero.Add(heroCap); hero.Add(recentLbl); hero.Add(chartWrap);
+            selDashBox.Add(hero);
             var info = Row(); HudStyle.Margin(info, 8, 0, 0, 0);
-            simTimeLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted); simTimeLbl.style.flexGrow = 1;
-            robotsLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted);
+            simTimeLbl = HudStyle.MakeLabel("", 11, HudStyle.Muted); simTimeLbl.style.flexGrow = 1;
+            robotsLbl = HudStyle.MakeLabel("", 11, HudStyle.Muted);
             info.Add(simTimeLbl); info.Add(robotsLbl);
-            sv.Add(info);
-
+            selDashBox.Add(info);
             kpiGrid = new VisualElement { pickingMode = PickingMode.Ignore };
             kpiGrid.style.flexDirection = FlexDirection.Row; kpiGrid.style.flexWrap = Wrap.Wrap; kpiGrid.style.justifyContent = Justify.SpaceBetween;
             HudStyle.Margin(kpiGrid, 8, 0, 0, 0);
-            sv.Add(kpiGrid);
+            selDashBox.Add(kpiGrid);
+            sv.Add(selDashBox);
+        }
 
-            // 속성
-            sv.Add(SectionTitle("속성"));
+        static (VisualElement tile, Label val) Tile(string label, string unit, float widthPct = 48.5f)
+        {
+            var tile = new VisualElement { pickingMode = PickingMode.Ignore };
+            tile.style.width = Length.Percent(widthPct); tile.style.backgroundColor = HudStyle.Tile;
+            HudStyle.Radius(tile, 10); HudStyle.Pad(tile, 9, 11); HudStyle.Margin(tile, 0, 0, 6, 0);
+            var row = Row(); row.style.alignItems = Align.FlexEnd;
+            var val = HudStyle.MakeLabel("—", 17, HudStyle.Strong, true);
+            var u = HudStyle.MakeLabel(unit, 10, HudStyle.Muted); HudStyle.Margin(u, 0, 0, 3, 4);
+            row.Add(val); row.Add(u);
+            var lbl = HudStyle.MakeLabel(label, 11, HudStyle.Muted);
+            tile.Add(row); tile.Add(lbl);
+            return (tile, val);
+        }
+
+        void RebuildPlant()
+        {
+            plantDirty = false;
+            plantTiles.Clear(); plantList.Clear(); plantRows.Clear(); plantUnitLbls.Clear();
+            if (!LayoutMode) return;
+            var (t1, v1) = Tile("설치된 설비", "대"); plantTiles.Add(t1); plantCountLbl = v1;
+            var (t2, v2) = Tile("이동 장비 합계", "대"); plantTiles.Add(t2); plantRobotLbl = v2;
+            var units = new List<string>();
+            foreach (var m in world.modules) if (m != null && !units.Contains(m.entry.throughputUnit)) units.Add(m.entry.throughputUnit);
+            foreach (var u in units) { var (t, v) = Tile("처리량 합계", u); plantTiles.Add(t); plantUnitLbls[u] = v; }
+
+            if (world.modules.Count == 0)
+            {
+                var l = HudStyle.MakeLabel("아직 설치된 설비가 없습니다. 왼쪽 라이브러리에서 끌어다 놓으세요.", 12, HudStyle.Muted);
+                l.style.whiteSpace = WhiteSpace.Normal; plantList.Add(l);
+                return;
+            }
+            foreach (var m in world.modules)
+            {
+                if (m == null) continue;
+                var pm = m;
+                var row = Row(); row.pickingMode = PickingMode.Position;
+                HudStyle.Pad(row, 7, 10); HudStyle.Radius(row, 8); HudStyle.Margin(row, 0, 0, 2, 0);
+                bool sel = pm == selModule;
+                row.style.backgroundColor = sel ? HudStyle.AccentDim : Color.clear;
+                var n = HudStyle.MakeLabel(pm.Label, 12, HudStyle.Text, sel); n.style.flexGrow = 1;
+                var v = HudStyle.MakeLabel("…", 12, HudStyle.Muted);
+                row.Add(n); row.Add(v);
+                row.RegisterCallback<PointerEnterEvent>(_ => { if (pm != selModule) row.style.backgroundColor = HudStyle.TileHover; });
+                row.RegisterCallback<PointerLeaveEvent>(_ => { if (pm != selModule) row.style.backgroundColor = Color.clear; });
+                row.RegisterCallback<ClickEvent>(_ => { world.Select(pm); world.FocusOn(pm); });
+                plantList.Add(row);
+                plantRows.Add((pm, v));
+            }
+        }
+
+        // ---------------------------------------------------------------- 오른쪽: 속성
+        void BuildRightPanel(VisualElement body)
+        {
+            rightPanel = Panel();
+            rightPanel.style.width = 320; rightPanel.style.flexShrink = 0; HudStyle.Pad(rightPanel, 16, 14);
+            body.Add(rightPanel);
+            var t = HudStyle.MakeLabel("속성", 15, HudStyle.Strong, true);
+            rightPanel.Add(t);
+            var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
+            sv.style.flexGrow = 1;
+            rightPanel.Add(sv);
+            propBody = sv;
+
+            catLbl = HudStyle.MakeLabel("", 10, HudStyle.Accent, true); catLbl.style.letterSpacing = 1.2f; HudStyle.Margin(catLbl, 14, 0, 0, 0);
+            titleLbl = HudStyle.MakeLabel("", 20, HudStyle.Strong, true); titleLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(titleLbl, 4, 0, 0, 0);
+            koLbl = HudStyle.MakeLabel("", 12, HudStyle.Text); koLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(koLbl, 2, 0, 0, 0);
+            descLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted); descLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(descLbl, 8, 0, 0, 0);
+            sv.Add(catLbl); sv.Add(titleLbl); sv.Add(koLbl); sv.Add(descLbl);
+
+            // 배치 모드: 위치 · 동작
+            moduleBox = new VisualElement();
+            moduleBox.Add(SectionTitle("배치"));
+            posLbl = HudStyle.MakeLabel("", 12, HudStyle.Text);
+            moduleBox.Add(posLbl);
+            var acts = Row(); HudStyle.Margin(acts, 8, 0, 0, 0);
+            var anim = HudStyle.MakeButton("애니메이션 보기", () => { if (entry != null) OpenAnimation(entry); });
+            var focus = HudStyle.MakeButton("화면 맞춤", () => world?.FocusOn(selModule));
+            var del = HudStyle.MakeButton("삭제", () => { if (selModule != null) world?.Remove(selModule); });
+            del.style.color = HudStyle.Rec;
+            HudStyle.Margin(anim, 0, 4, 0, 0);
+            acts.Add(anim); acts.Add(focus); acts.Add(del);
+            moduleBox.Add(acts);
+            sv.Add(moduleBox);
+
+            sv.Add(SectionTitle("설정"));
             paramBox = new VisualElement();
             sv.Add(paramBox);
 
-            var specHead = Row(); HudStyle.Margin(specHead, 12, 0, 4, 0);
-            var specT = HudStyle.MakeLabel("모델 사양 (config)", 12, HudStyle.Text, true); specT.style.flexGrow = 1;
-            var specFold = HudStyle.MakeButton("펼치기", null); specFold.style.height = 22; specFold.style.fontSize = 11; HudStyle.Pad(specFold, 0, 8);
+            var specHead = Row(); HudStyle.Margin(specHead, 18, 0, 6, 0);
+            var specT = HudStyle.MakeLabel("모델 사양", 11, HudStyle.Muted, true); specT.style.flexGrow = 1;
+            var specFold = HudStyle.MakeButton("펼치기", null); specFold.style.height = 24; specFold.style.fontSize = 11; HudStyle.Pad(specFold, 0, 10);
             specHead.Add(specT); specHead.Add(specFold);
             specBox = new VisualElement(); specBox.Add(specHead);
             specBody = new VisualElement(); specBody.style.display = DisplayStyle.None;
@@ -679,54 +945,50 @@ namespace EquipFX
             sv.Add(specBox);
         }
 
-        // 설비가 바뀌면 오른쪽 패널 내용을 다시 만듦
+        // 선택(또는 열린) 설비가 바뀌면 대시보드·속성 내용을 다시 만듦
         void RefreshEntryUi(bool rebuild = true)
         {
-            foreach (var kv in cards)
-            {
-                bool on = kv.Key == entry;
-                kv.Value.style.backgroundColor = on ? HudStyle.AccentDim : HudStyle.Tile;
-                HudStyle.Border(kv.Value, 1, on ? new Color(HudStyle.Accent.r, HudStyle.Accent.g, HudStyle.Accent.b, 0.6f) : Color.clear);
-            }
-            if (nameLbl == null) return;
-            nameLbl.text = entry != null ? entry.name : "설비를 고르세요";
-            catLbl.text = entry != null ? entry.category.ToUpperInvariant() : "";
-            titleLbl.text = entry != null ? entry.name : "선택된 설비 없음";
-            koLbl.text = entry != null ? entry.korean : "왼쪽 라이브러리에서 설비를 고르면 장면이 열립니다.";
-            descLbl.text = entry != null ? entry.desc : "";
-            tpUnitLbl.text = entry != null ? entry.throughputUnit : "";
+            foreach (var kv in cards) kv.Value.style.backgroundColor = !LayoutMode && kv.Key == entry ? HudStyle.AccentDim : Color.clear;
+            if (titleLbl == null) return;
+            bool has = entry != null;
+            catLbl.text = has ? entry.category.ToUpperInvariant() : "";
+            titleLbl.text = has ? (LayoutMode && selModule != null ? selModule.Label : entry.name) : (LayoutMode ? "선택된 설비 없음" : "열린 설비 없음");
+            koLbl.text = has ? entry.korean : (LayoutMode ? "바닥에 설치한 설비를 클릭하면 여기에 속성이 나옵니다." : "왼쪽 라이브러리에서 설비를 고르세요.");
+            descLbl.text = has ? entry.desc : "";
+            tpUnitLbl.text = has ? entry.throughputUnit : "";
+            selDashBox.style.display = has ? DisplayStyle.Flex : DisplayStyle.None;
+            moduleBox.style.display = LayoutMode && selModule != null ? DisplayStyle.Flex : DisplayStyle.None;
+            plantDirty = true;
             if (!rebuild) return;
 
             kpiGrid.Clear(); kpiLabels.Clear();
-            if (entry != null)
+            if (has)
                 foreach (var k in entry.kpis)
                 {
-                    var tile = new VisualElement { pickingMode = PickingMode.Ignore };
-                    tile.style.width = Length.Percent(48.5f); tile.style.backgroundColor = HudStyle.Tile;
-                    HudStyle.Radius(tile, 8); HudStyle.Pad(tile, 8, 10); HudStyle.Margin(tile, 0, 0, 6, 0);
-                    var row = Row(); row.style.alignItems = Align.FlexEnd;
-                    var val = HudStyle.MakeLabel("—", 18, Color.white, true);
-                    var unit = HudStyle.MakeLabel(k.unit, 11, HudStyle.Muted); HudStyle.Margin(unit, 0, 0, 3, 4);
-                    row.Add(val); row.Add(unit);
-                    var lbl = HudStyle.MakeLabel(k.label, 11, HudStyle.Muted);
-                    tile.Add(row); tile.Add(lbl);
+                    var (tile, val) = Tile(k.label, k.unit);
                     kpiGrid.Add(tile);
                     kpiLabels.Add((k, val));
                 }
             RebuildParams();
             RebuildSpecs();
-            RefreshTimelineMarks();
+            marksSet = false;
         }
 
         void RebuildParams()
         {
             paramBox.Clear(); paramFields.Clear();
-            if (entry == null) return;
+            if (entry == null)
+            {
+                var l = HudStyle.MakeLabel(LayoutMode ? "설비를 선택하면 로봇 수·주문량 같은 설정을 바꿀 수 있습니다." : "", 12, HudStyle.Muted);
+                l.style.whiteSpace = WhiteSpace.Normal; paramBox.Add(l);
+                return;
+            }
             var cfg = GetConfig(view);
-            overrides.TryGetValue(entry.id, out var map);
+            Dictionary<string, double> map = null;
+            if (LayoutMode) map = selModule?.pars; else overrides.TryGetValue(entry.id, out map);
             if (entry.pars.Count == 0)
             {
-                var l = HudStyle.MakeLabel("이 장면은 고정된 동작 주기로 움직여 바꿀 속성이 없습니다.", 12, HudStyle.Muted);
+                var l = HudStyle.MakeLabel("이 설비는 고정된 동작 주기로 움직여 바꿀 설정이 없습니다.", 12, HudStyle.Muted);
                 l.style.whiteSpace = WhiteSpace.Normal; paramBox.Add(l);
                 return;
             }
@@ -736,24 +998,26 @@ namespace EquipFX
                 if (view != null) (target, fi) = ResolveField(view, cfg, p.field);
                 string cur = map != null && map.TryGetValue(p.field, out var ov) ? ov.ToString(CultureInfo.InvariantCulture)
                            : fi != null && target != null ? Convert.ToString(fi.GetValue(target), CultureInfo.InvariantCulture) : "";
-                var row = Row(); HudStyle.Margin(row, 0, 0, 6, 0);
-                var lbl = HudStyle.MakeLabel(p.label, 12, HudStyle.Text); lbl.style.flexGrow = 1;
-                var range = HudStyle.MakeLabel($"{p.min:0.##}–{p.max:0.##}", 10, HudStyle.Muted); HudStyle.Margin(range, 0, 8, 0, 0);
+                var row = Row(); HudStyle.Margin(row, 0, 0, 8, 0);
+                var labels = new VisualElement { pickingMode = PickingMode.Ignore }; labels.style.flexGrow = 1;
+                labels.Add(HudStyle.MakeLabel(p.label, 12, HudStyle.Text));
+                labels.Add(HudStyle.MakeLabel($"{p.min:0.##} – {p.max:0.##}", 10, HudStyle.Muted));
                 var tf = new TextField { value = cur, isDelayed = true };
-                tf.style.width = 84; tf.style.height = 26; tf.style.fontSize = 13; HudStyle.Margin(tf, 0, 0, 0, 0);
+                tf.style.width = 90; tf.style.height = 30; tf.style.fontSize = 13; HudStyle.Margin(tf, 0, 0, 0, 0);
                 var input = tf.Q(className: TextField.inputUssClassName);
                 if (input != null)
                 {
-                    input.style.backgroundColor = new Color(0, 0, 0, 0.35f); input.style.color = Color.white;
-                    HudStyle.Border(input, 1, HudStyle.PanelLine); HudStyle.Radius(input, 5);
+                    input.style.backgroundColor = HudStyle.Field; input.style.color = HudStyle.Strong;
+                    HudStyle.Border(input, 0, Color.clear); HudStyle.Radius(input, 8); HudStyle.Pad(input, 0, 8);
                 }
-                row.Add(lbl); row.Add(range); row.Add(tf);
+                tf.Query<TextElement>().ForEach(te => te.style.color = HudStyle.Strong);
+                row.Add(labels); row.Add(tf);
                 paramBox.Add(row);
                 paramFields.Add((p, tf, fi));
             }
-            var btns = Row(); btns.style.justifyContent = Justify.FlexEnd; HudStyle.Margin(btns, 4, 0, 0, 0);
+            var btns = Row(); btns.style.justifyContent = Justify.FlexEnd; HudStyle.Margin(btns, 6, 0, 0, 0);
             var reset = HudStyle.MakeButton("기본값", ResetParams);
-            var apply = HudStyle.MakeButton("적용 후 다시 시작", ApplyParams);
+            var apply = HudStyle.MakeButton(LayoutMode ? "적용" : "적용 후 다시 시작", ApplyParams);
             HudStyle.SetOn(apply, true);
             btns.Add(reset); btns.Add(apply);
             paramBox.Add(btns);
@@ -772,10 +1036,9 @@ namespace EquipFX
                 if (o is Array arr) { var parts = new List<string>(); foreach (var x in arr) parts.Add(Convert.ToString(x, CultureInfo.InvariantCulture)); val = string.Join(", ", parts); }
                 else if (o is IFormattable fm) val = fm.ToString(o is float || o is double ? "0.###" : null, CultureInfo.InvariantCulture);
                 else val = Convert.ToString(o, CultureInfo.InvariantCulture);
-                var row = Row(); row.style.justifyContent = Justify.SpaceBetween; HudStyle.Margin(row, 0, 0, 2, 0);
-                var a = HudStyle.MakeLabel(f.Name, 11, HudStyle.Muted);
-                var b = HudStyle.MakeLabel(val, 11, HudStyle.Text);
-                row.Add(a); row.Add(b);
+                var row = Row(); row.style.justifyContent = Justify.SpaceBetween; HudStyle.Margin(row, 0, 0, 3, 0);
+                row.Add(HudStyle.MakeLabel(f.Name, 11, HudStyle.Muted));
+                row.Add(HudStyle.MakeLabel(val, 11, HudStyle.Text));
                 specBody.Add(row);
             }
         }
@@ -784,7 +1047,7 @@ namespace EquipFX
         {
             if (timeline == null) return;
             var starts = new List<float>();
-            if (view != null)
+            if (view != null && !LayoutMode)
                 foreach (var src in FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None))
                     if (src is ICaptionSource cs && cs.Seq != null)
                     {
@@ -796,47 +1059,89 @@ namespace EquipFX
         }
 
         // ---------------------------------------------------------------- 갱신
+        void UpdateModeUi()
+        {
+            if (animTools == null) return;
+            animTools.style.display = LayoutMode ? DisplayStyle.None : DisplayStyle.Flex;
+            layoutTools.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
+            plantBox.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
+            HudStyle.SetOn(modeLayoutBtn, LayoutMode);
+            HudStyle.SetOn(modeAnimBtn, !LayoutMode && entry != null);
+            selDashTitle.text = LayoutMode ? "선택한 설비" : "실시간";
+            RefreshEntryUi(false);
+        }
+
         void UpdateControls()
         {
             if (playBtn == null) return;
             playBtn.Icon = paused ? IconButton.Kind.Play : IconButton.Kind.Pause;
-            for (int i = 0; i < Speeds.Length; i++) HudStyle.SetOn(speedBtns[i], Mathf.Approximately(Speeds[i], speed));
+            speedDd?.SetValueWithoutNotify(SpeedLabel(speed));
             bool cine = GetBool(view, "cinematicCamera", true);
             HudStyle.SetOn(camCineBtn, cine); HudStyle.SetOn(camOrbitBtn, !cine);
             HudStyle.SetOn(captionBtn, captionsOn); HudStyle.SetOn(loopBtn, loop);
-            if (recBtn != null) recBtn.SetEnabled(entry != null && EditorRecord != null);
+            if (recBtn != null) recBtn.SetEnabled(entry != null && EditorRecord != null && !LayoutMode);
         }
 
         void UpdateUiFast()
         {
-            timeline.SetValue(Mathf.Min(Elapsed, MovieLength));
-            timeLbl.text = loading ? "불러오는 중"
-                         : ffTarget >= 0 ? $"이동 → {ffTarget:0.0} s"
-                         : Elapsed > MovieLength ? $"{Elapsed:0} s (반복 끔)"
-                         : $"{Elapsed:0.0} / {MovieLength:0} s";
+            if (!LayoutMode && timeline != null)
+            {
+                timeline.SetValue(Mathf.Min(Elapsed, MovieLength));
+                timeLbl.text = loading ? "불러오는 중"
+                             : ffTarget >= 0 ? $"→ {ffTarget:0.0} s"
+                             : Elapsed > MovieLength ? $"{Elapsed:0} s"
+                             : $"{Elapsed:0.0} / {MovieLength:0} s";
+            }
             if (toastLbl.style.display == DisplayStyle.Flex && Time.unscaledTime > toastUntil) toastLbl.style.display = DisplayStyle.None;
         }
 
         void UpdateUiSlow()
         {
             if (!hudVisible) return;
-            if (!captionsOn) SetCaptions(false);
-            if (!marksSet && clockStart >= 0) RefreshTimelineMarks();   // 설비가 Start 에서 자막을 새로 만들 수 있어 계속 맞춰 줌
-            if (entry == null || view == null || !entry.ready(view))
+            if (!captionsOn && !LayoutMode) SetCaptions(false);
+            if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
+            if (LayoutMode) UpdatePlant();
+
+            if (!Ready)
             {
-                tpLbl.text = "—"; recentLbl.text = "최근 1분 —"; simTimeLbl.text = ""; robotsLbl.text = "";
+                tpLbl.text = "—"; recentLbl.text = LayoutMode && selModule != null && !selModule.built ? "설치 중…" : "최근 1분 —";
+                simTimeLbl.text = ""; robotsLbl.text = "";
                 chart.SetValues(Array.Empty<float>()); chartMaxLbl.text = "";
                 foreach (var (_, val) in kpiLabels) val.text = "—";
+                if (posLbl != null && selModule != null) posLbl.text = "설치 중…";
                 return;
             }
             tpLbl.text = entry.throughput(view).ToString("N0", CultureInfo.InvariantCulture);
-            recentLbl.text = rates.Count > 0 ? $"최근 1분 {rates[rates.Count - 1].ToString("N0", CultureInfo.InvariantCulture)} {entry.throughputUnit}" : "최근 1분 — (집계 중)";
+            recentLbl.text = rates.Count > 0 ? $"최근 1분  {rates[rates.Count - 1].ToString("N0", CultureInfo.InvariantCulture)} {entry.throughputUnit}" : "최근 1분 — (집계 중)";
             chart.SetValues(rates);
             chartMaxLbl.text = rates.Count > 1 ? chart.Max.ToString("N0", CultureInfo.InvariantCulture) : "";
             simTimeLbl.text = $"시뮬레이션 t = {entry.simTime(view):0} s";
             robotsLbl.text = $"이동 장비 {entry.robotCount(view)}대";
             foreach (var (def, val) in kpiLabels) val.text = def.value(view) ?? "—";
+            if (LayoutMode && selModule != null)
+                posLbl.text = $"위치 X {selModule.Min.x:0} m, Z {selModule.Min.y:0} m   ·   크기 {selModule.Size.x:0.0} × {selModule.Size.y:0.0} m";
             UpdateControls();
+        }
+
+        void UpdatePlant()
+        {
+            if (plantDirty || plantRows.Count != world.modules.Count) RebuildPlant();
+            int built = 0, robots = 0;
+            var sums = new Dictionary<string, double>();
+            foreach (var (m, val) in plantRows)
+            {
+                if (m == null) continue;
+                if (!m.built || m.view == null || !m.entry.ready(m.view)) { val.text = "설치 중…"; continue; }
+                built++;
+                robots += m.entry.robotCount(m.view);
+                double tp = m.entry.throughput(m.view);
+                sums.TryGetValue(m.entry.throughputUnit, out var s0); sums[m.entry.throughputUnit] = s0 + tp;
+                val.text = $"{tp.ToString("N0", CultureInfo.InvariantCulture)} {m.entry.throughputUnit}";
+            }
+            if (plantCountLbl != null) plantCountLbl.text = world.modules.Count.ToString();
+            if (plantRobotLbl != null) plantRobotLbl.text = robots.ToString();
+            foreach (var kv in plantUnitLbls)
+                kv.Value.text = sums.TryGetValue(kv.Key, out var s) ? s.ToString("N0", CultureInfo.InvariantCulture) : "—";
         }
 
         void Toast(string msg)
@@ -874,8 +1179,6 @@ namespace EquipFX
             return null;
         }
 
-        // UnityEngine.TextCore.Text.FontAsset.CreateFontAsset(familyName, styleName, pointSize)
-        // Unity 버전마다 공개 여부가 달라 리플렉션으로 부름 (컴파일 오류 방지)
         static object CreateOsFontAsset(string family)
         {
             try

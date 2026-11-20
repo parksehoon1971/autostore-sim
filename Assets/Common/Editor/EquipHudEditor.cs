@@ -33,6 +33,8 @@ namespace EquipFXEditor
                 SessionState.SetString(PendingRecordKey, e.menuType);
                 EditorApplication.isPlaying = false;
             };
+            // HUD 의 닫기 단추: 실행 파일에서는 Application.Quit(), 에디터에서는 플레이 모드 종료
+            EquipHud.EditorQuit = () => EditorApplication.isPlaying = false;
             EditorApplication.playModeStateChanged += OnPlayMode;
         }
 
@@ -73,6 +75,38 @@ namespace EquipFXEditor
         {
             Menu.SetChecked(ToggleItem, PlayerPrefs.GetInt(EquipHud.PrefEnabled, 1) != 0);
             return true;
+        }
+
+        // 배치 게임 메인 공간 장면 (실행 파일의 첫 장면)
+        [MenuItem("애니메이션/배치 게임/배치 공간 열기 (없으면 만들기)", priority = 0)]
+        static void OpenLayoutScene()
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("플레이 모드를 먼저 종료하세요."); return; }
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var path = LayoutWorld.ScenePath;
+            if (!File.Exists(path))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+                var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
+                camGo.AddComponent<Camera>(); camGo.AddComponent<AudioListener>();
+                new GameObject("LayoutWorld").AddComponent<LayoutWorld>();
+                EditorSceneManager.SaveScene(scene, path);
+                Debug.Log("[배치 게임] 장면 생성: " + path + "  ▶ Play 를 누르세요.");
+            }
+            else EditorSceneManager.OpenScene(path);
+            // 실행 파일을 만들면 배치 공간이 첫 장면이 되도록 빌드 목록 맨 앞에 둠
+            var list = new System.Collections.Generic.List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
+            list.RemoveAll(s => s.path == path);
+            list.Insert(0, new EditorBuildSettingsScene(path, true));
+            EditorBuildSettings.scenes = list.ToArray();
+        }
+
+        [MenuItem("애니메이션/배치 게임/저장된 배치 지우기", priority = 1)]
+        static void ClearLayoutSave()
+        {
+            PlayerPrefs.DeleteKey(LayoutWorld.SaveKey); PlayerPrefs.Save();
+            Debug.Log("[배치 게임] 저장된 배치를 지웠습니다.");
         }
 
         [MenuItem(Root + "모든 설비 장면 만들기 (없는 것만)", priority = 901)]
