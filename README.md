@@ -145,3 +145,42 @@ blender -b -P blender/rapyuta_blender.py -- --out blender/out/rapyuta --trace bl
 ```
 
 결과: 로봇 20대에서 약 430 빈/h, 출고 1건당 앞쪽 빈 치우기 약 0.2회. 층 높이 630 mm, 로봇 80 mm·2.5 m/s, 빈 650×440 mm는 공식 수치이고 셀 피치·리프트 속도 등은 가정입니다. Rapyuta 제품 도면이 아닙니다. 자세한 내용은 [docs/rapyuta-research.md](docs/rapyuta-research.md).
+
+---
+
+# HaiPick Climb — 같은 방식의 네 번째 장면
+
+Hai Robotics의 HaiPick Climb처럼, 높이 11.7 m 표준 랙의 통로 쪽 면에 가이드 레일을 달고 로봇 18대가 레일을 잡고 올라가 토트를 꺼냅니다. 로봇은 토트를 실은 채 랙 밑으로 지나 앞쪽 작업대 3곳으로 달려가고, 작업대 레일을 조금 올라 토트를 허리 높이로 내민 뒤 가까운 빈 칸에 다시 넣습니다. 같은 Unity 프로젝트 안에 **애니메이션 → HaiPick** 메뉴로 들어 있습니다.
+
+![HaiPick 전경](docs/images/haipick_wide.png)
+
+![HaiPick 등반](docs/images/haipick_climb.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/haipick-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_haipick_trace.js` | 시뮬레이션 → Blender 궤적 `blender/haipick_trace.json` |
+| `blender/haipick_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/haipick/` | 로봇·토트 FBX/GLB, 렌더 이미지 |
+| `Assets/HaiPick/Scripts/HaiPickSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/HaiPick/Scripts/HaiPickView.cs` | 랙·가이드 레일·작업대·로봇·토트·조명·후처리 자동 구성, HUD |
+| `Assets/HaiPick/Scripts/HaiPickCamera.cs` | Blender와 같은 30초 카메라 동선 / 마우스 오비트 |
+| `Assets/HaiPick/Scripts/HaiPickMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/HaiPick/Editor/HaiPickMenu.cs` | `애니메이션 → HaiPick` 메뉴 |
+| `docs/haipick-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → HaiPick → Open Climb Scene** → **Play**. 30초 영상은 **애니메이션 → HaiPick → Record 30s Movie (MP4, 1920x1080)** → `Recordings/haipick_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(600초 워밍업 직후, seed 10)에서 시작해 같은 장면이 나옵니다.
+
+**Blender** (저장소 루트에서):
+
+```powershell
+# 장면 생성 + 정지 이미지 (300 프레임 = 7.2 m 높이에서 토트 꺼내기)
+blender -b -P blender/haipick_blender.py -- --out blender/out/haipick --trace blender/haipick_trace.json --still 300 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 haipick_30s.mp4 로 합쳐짐
+blender -b -P blender/haipick_blender.py -- --out blender/out/haipick --trace blender/haipick_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_haipick_trace.js --robots 24 --seed 5  (카메라 동선은 seed 10 기준)
+```
+
+결과: 로봇 18대에서 시간당 약 640 토트, 리드타임 약 50초, 평균 등반 1.8 m. 처리 한계는 작업대 3곳에서 약 730 토트/h입니다. 높이 12 m, 통로 900 mm, 주행 4 m/s, 등반 1 m/s, 레일 한쪽 면·등반 팔 2개는 공식 수치이고 로봇·토트 치수, 칸 피치, 작업대 구조는 가정입니다. Hai Robotics 제품 도면이 아닙니다. 자세한 내용은 [docs/haipick-research.md](docs/haipick-research.md).
