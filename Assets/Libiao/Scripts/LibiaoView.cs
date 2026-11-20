@@ -301,16 +301,19 @@ namespace Libiao
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -415,8 +418,9 @@ namespace Libiao
                         B(deck, cell, cell, DeckT, x, y, Z - DeckT / 2, M.deck);
                         if (Sim.IsAisle(i, j) || IsStationCell(i, j))
                         {
-                            B(deck, 0.07f, 0.07f, 0.001f, x, y, Z + 0.0006f, M.qr);
-                            B(deck, 0.09f, 0.09f, 0.0008f, x, y, Z + 0.0002f, M.qrw);
+                            // QR 마커: 이전에는 데크 위 0.6 mm / 1.1 mm 라 멀리서 데크와 번갈아 깜빡였음 → 2 mm / 4 mm
+                            B(deck, 0.07f, 0.07f, 0.002f, x, y, Z + 0.003f, M.qr);
+                            B(deck, 0.09f, 0.09f, 0.002f, x, y, Z + 0.001f, M.qrw);
                         }
                     }
                 }
@@ -598,6 +602,7 @@ namespace Libiao
                     var go = Instantiate(prefab, root, false);
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
+                    EquipFX.MeshFix.ResolveModel(go);
                     // 앞 방향 확인: 'Pivot' 기둥 두 개가 앞뒤(X)로 놓여 있어야 함
                     Transform piv = null;
                     foreach (var t in go.GetComponentsInChildren<Transform>()) { if (t.name.Contains("Pivot")) piv = t; if (t.name.StartsWith("Tray")) tray = t; }
@@ -648,8 +653,9 @@ namespace Libiao
                     if (type <= 2)
                     {
                         Cube("Box", new Vector3(sx, sz, sy), Vector3.zero, M.card[v], go.transform);
-                        Cube("Tape", new Vector3(sx + 0.002f, 0.0015f, 0.05f), new Vector3(0, sz / 2 + 0.0005f, 0), M.tape, go.transform, false);
-                        Cube("Label", new Vector3(sx * 0.35f, 0.001f, sy * 0.4f), new Vector3(-sx * 0.2f, sz / 2 + 0.0008f, -sy * 0.15f), M.label, go.transform, false);
+                        // 테이프 윗면(+1.25 mm)과 라벨 윗면(+1.3 mm)이 거의 같은 높이라 겹친 곳이 깜빡였음 → +2.5 mm / +4 mm
+                        Cube("Tape", new Vector3(sx + 0.002f, 0.003f, 0.05f), new Vector3(0, sz / 2 + 0.001f, 0), M.tape, go.transform, false);
+                        Cube("Label", new Vector3(sx * 0.35f, 0.002f, sy * 0.4f), new Vector3(-sx * 0.2f, sz / 2 + 0.003f, -sy * 0.15f), M.label, go.transform, false);
                     }
                     else
                     {
@@ -696,7 +702,7 @@ namespace Libiao
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.05f, 0.05f, 0.06f);
-            Cam.nearClipPlane = 0.03f; Cam.farClipPlane = 200f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.1f, 90f);   // near 0.03 → 0.1: 원거리 깊이 정밀도 3배 이상 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -722,7 +728,19 @@ namespace Libiao
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.1f);
             var wb = prof.Add<WhiteBalance>(true); wb.temperature.Override(-4f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "3D Robotic Parcel Sorter",
+                name = "Libiao",
+                korean = "3D 로봇 택배 분류기",
+                spec = $"로봇 {config.robots}대  ·  슈트 {Sim.chutes.Count}개  ·  투입 스테이션 {Sim.stations.Count}곳  ·  데크 높이 {config.deckZ:0.0} m",
+                accent = new Color(1f, 0.74f, 0.12f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

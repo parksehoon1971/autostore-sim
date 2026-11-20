@@ -1,109 +1,70 @@
-// 30초 시네마틱 카메라 (Blender 스크립트 CAM_KEYS 와 같은 동선) + 수동 오비트 카메라
+// 30초 시네마틱 카메라: 컷 기반 샷 구성 (로봇 동작 강조) + 수동 오비트 카메라
+// 샷 시점은 기본 설정(warmup 600 s)에서 시뮬레이션을 돌려 찾은 실제 동작에 맞췄습니다:
+//   5~11.5 s 로봇 27 이 앞쪽 투입 스테이션에서 받은 소포를 싣고 달려 왼쪽 슈트(1.05, 2.45)에 떨어뜨림 (10.9 s)
+//  11.5~17.6 s 데크 아래 점검 통로: 소포가 쌓이는 자루 사이를 지나감
+//  17.6~22.6 s 위에서 본 30대 군집 주행
+//  22.6~27.4 s 로봇 4 가 슈트(8.05, 6.65)에서 트레이를 기울여 투하 (25.0 s)
+// 설정을 바꿔 다른 동작이 나오더라도 추적 샷은 해당 로봇을 계속 따라가므로 화면은 유지됩니다.
 using UnityEngine;
-using UnityEngine.Rendering.Universal;
-#if ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
+using EquipFX;
 
 namespace Libiao
 {
-    public class LibiaoCamera : MonoBehaviour
+    public class LibiaoCamera : CinematicRig
     {
         public LibiaoView view;
-        public Transform target;
-        public float duration = 30f;
-        public bool loop = true;
-        [HideInInspector] public DepthOfField dof;
 
-        float t0 = -1;
-        float yaw = 35, pitch = 30, dist = 16;
-        Vector3 orbitCenter;
+        protected override bool Ready => view != null && view.Sim != null;
+        protected override bool Cinematic => view.cinematicCamera;
 
-        struct Key { public float f; public Vector3 pos, look; public float lens; }
-        Key[] keys;
+        SorterRobot Rb(int i) { var L = view.Sim.robots; return L[((i % L.Count) + L.Count) % L.Count]; }
+        Vector3 RobotAt(int i, float up) { var r = Rb(i); return V(r.x, r.y, view.config.deckZ + up); }
 
-        // 시뮬레이션 좌표 (x, y, z-up) → Unity
-        static Key K(float f, float x, float y, float z, float lx, float ly, float lz, float lens) =>
-            new Key { f = f, pos = new Vector3(x, z, y), look = new Vector3(lx, lz, ly), lens = lens };
-
-        void BuildKeys()
+        protected override void BuildShots(ShotSequencer seq)
         {
-            // blender/libiao_blender.py 의 CAM_KEYS 와 같은 값 (기본 설정 nx=19, ny=13, cell=0.7 기준)
-            keys = new[]
+            var c = view.config; float Z = c.deckZ, cx = c.nx * c.cell / 2, cy = c.ny * c.cell / 2;
+
+            // 1) 전경 (타이틀 카드)
+            seq.Add(Path(0f, 4.8f)
+                .Add(0, V(15.6f, -9.0f, 7.6f), V(6.6f, 4.5f, 1.8f), 24)
+                .Add(1, V(12.2f, -6.6f, 5.4f), V(6.2f, 2.6f, 2.3f), 26));
+
+            // 2) 소포를 실은 로봇을 바짝 따라가 슈트에 떨어뜨리는 순간까지
+            seq.Add(new FollowShot
             {
-                K(0.00f, 15.6f, -9.0f, 7.6f, 6.6f, 4.5f, 1.8f, 24),   // 전경
-                K(0.13f, 9.2f, -4.6f, 3.7f, 5.95f, -1.7f, 2.6f, 30),  // 앞쪽 투입 스테이션
-                K(0.22f, 3.2f, -3.6f, 3.0f, 1.6f, 1.0f, 2.0f, 26),
-                K(0.28f, -1.9f, -3.2f, 1.9f, 1.0f, 1.5f, 1.6f, 24),   // 데크 왼쪽 모서리 바깥
-                K(0.35f, -1.4f, 4.55f, 1.6f, 3.0f, 4.0f, 1.4f, 22),   // 데크 아래 점검 통로
-                K(0.45f, 4.0f, 4.55f, 1.6f, 9.0f, 3.9f, 1.3f, 22),    // 자루 사이
-                K(0.55f, 13.7f, 4.55f, 1.7f, 14.2f, 8.0f, 2.9f, 24),
-                K(0.63f, 15.4f, 6.6f, 3.7f, 10.0f, 5.4f, 2.4f, 24),   // 바깥으로 나와 상승
-                K(0.72f, 11.0f, 9.6f, 3.6f, 7.0f, 7.3f, 2.5f, 28),
-                K(0.78f, 8.4f, 8.8f, 3.2f, 6.8f, 7.35f, 2.55f, 35),   // 투하 근접
-                K(0.84f, 8.0f, 8.4f, 3.3f, 6.6f, 7.2f, 2.5f, 35),
-                K(0.91f, 12.6f, 11.5f, 5.0f, 7.0f, 5.0f, 2.4f, 26),
-                K(1.00f, -3.5f, 16.0f, 7.8f, 6.6f, 4.5f, 1.8f, 24),   // 뒤쪽 전경
-            };
-            var c = view.config;
+                start = 4.8f, end = 11.5f, target = () => RobotAt(27, 0.32f),
+                offset0 = new Vector3(-1.4f, 0.9f, -1.0f), offset1 = new Vector3(0.35f, 0.75f, -1.3f),
+                lookOffset = new Vector3(0, -0.05f, 0), lens0 = 30, lens1 = 38, smooth = 0.3f,
+                title = "투입 → 슈트 주행", detail = "투입대에서 소포를 받은 로봇이 목적지 슈트까지 최단 경로로 달립니다",
+            });
+
+            // 3) 데크 아래 점검 통로: 자루 사이를 지나감
+            seq.Add(Path(11.5f, 17.6f, "자루 집하", $"슈트 {view.Sim.chutes.Count}개 아래 자루에 목적지별로 소포가 쌓입니다")
+                .Add(0, V(-1.4f, 4.55f, 1.6f), V(3.0f, 4.0f, 1.4f), 22)
+                .Add(0.5f, V(3.0f, 4.55f, 1.6f), V(8.0f, 3.9f, 1.3f), 22)
+                .Add(1, V(8.0f, 4.55f, 1.65f), V(12.5f, 5.0f, 1.9f), 24));
+
+            // 4) 위에서 본 군집 주행
+            seq.Add(Path(17.6f, 22.6f, "군집 주행", $"로봇 {c.robots}대가 데크 위 통로를 동시에 오가며 분류합니다")
+                .Add(0, V(cx - 2.6f, cy - 4.2f, Z + 6.4f), V(cx, cy, Z), 18)       // 천장(10 m) 조명 아래
+                .Add(1, V(cx + 2.4f, cy - 3.4f, Z + 6.0f), V(cx + 0.3f, cy + 0.3f, Z), 18));
+
+            // 5) 투하 근접: 다가오는 로봇 앞에서 트레이가 기울어지는 순간
+            seq.Add(new FollowShot
+            {
+                start = 22.6f, end = 27.4f, target = () => RobotAt(4, 0.30f),
+                offset0 = new Vector3(-1.3f, 0.8f, -1.1f), offset1 = new Vector3(-0.75f, 0.62f, -1.15f),
+                lookOffset = new Vector3(0, -0.04f, 0), lens0 = 35, lens1 = 42, smooth = 0.3f,
+                title = "틸트 트레이 투하", detail = "슈트 옆에 멈춘 로봇이 트레이를 기울여 소포를 아래 자루로 떨어뜨립니다",
+            });
+
+            // 6) 빠지며 뒤쪽 전경
+            seq.Add(Path(27.4f, 30f)
+                .Add(0, V(12.6f, 11.5f, 5.0f), V(7.0f, 5.0f, 2.4f), 26)
+                .Add(1, V(-3.5f, 16.0f, 7.8f), V(6.6f, 4.5f, 1.8f), 24));
+
             orbitCenter = new Vector3(c.nx * c.cell / 2, c.deckZ * 0.6f, c.ny * c.cell / 2);
-        }
-
-        public void Restart() { t0 = Time.time; }
-
-        static Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
-        {
-            float t2 = t * t, t3 = t2 * t;
-            return 0.5f * (2f * p1 + (-p0 + p2) * t + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
-        }
-
-        // 축마다 두 키 사이로 제한 (곡선이 키 밖으로 튀어 자루·기둥에 닿지 않게. Blender 의 auto-clamped 보간과 비슷)
-        static Vector3 Clamp(Vector3 v, Vector3 a, Vector3 b) =>
-            new Vector3(Mathf.Clamp(v.x, Mathf.Min(a.x, b.x), Mathf.Max(a.x, b.x)),
-                        Mathf.Clamp(v.y, Mathf.Min(a.y, b.y), Mathf.Max(a.y, b.y)),
-                        Mathf.Clamp(v.z, Mathf.Min(a.z, b.z), Mathf.Max(a.z, b.z)));
-
-        void LateUpdate()
-        {
-            if (view == null || view.Sim == null) return;
-            if (keys == null) BuildKeys();
-            var cam = GetComponent<Camera>();
-            if (view.cinematicCamera)
-            {
-                if (t0 < 0) t0 = Time.time;
-                float u = (Time.time - t0) / duration;
-                u = loop ? Mathf.Repeat(u, 1f) : Mathf.Clamp01(u);
-                int i = 0; while (i < keys.Length - 2 && u > keys[i + 1].f) i++;
-                var k0 = keys[Mathf.Max(0, i - 1)]; var k1 = keys[i]; var k2 = keys[i + 1]; var k3 = keys[Mathf.Min(keys.Length - 1, i + 2)];
-                // 구간 사이 속도가 이어지도록 선형 파라미터 + 처음/끝만 부드럽게
-                float s = Mathf.InverseLerp(k1.f, k2.f, u);
-                if (i == 0) s = Mathf.SmoothStep(0, 1, s * 0.5f) * 2f;
-                transform.position = Clamp(CatmullRom(k0.pos, k1.pos, k2.pos, k3.pos, s), k1.pos, k2.pos);
-                var look = Clamp(CatmullRom(k0.look, k1.look, k2.look, k3.look, s), k1.look, k2.look);
-                transform.rotation = Quaternion.LookRotation(look - transform.position, Vector3.up);
-                cam.focalLength = Mathf.Lerp(k1.lens, k2.lens, Mathf.SmoothStep(0, 1, s));
-                if (target) target.position = look;
-            }
-            else Orbit();
-            if (dof != null && target) dof.focusDistance.value = Vector3.Distance(transform.position, target.position);
-        }
-
-        void Orbit()
-        {
-            Vector2 delta = Vector2.zero; float scroll = 0; bool drag = false;
-#if ENABLE_INPUT_SYSTEM
-            var m = Mouse.current;
-            if (m != null) { drag = m.rightButton.isPressed || m.leftButton.isPressed; delta = m.delta.ReadValue() * 0.2f; scroll = m.scroll.ReadValue().y * 0.01f; }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            drag = Input.GetMouseButton(0) || Input.GetMouseButton(1);
-            delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 3f; scroll = Input.mouseScrollDelta.y * 0.5f;
-#endif
-            if (drag) { yaw += delta.x; pitch = Mathf.Clamp(pitch - delta.y, 2, 85); }
-            dist = Mathf.Clamp(dist - scroll, 2, 45);
-            var rot = Quaternion.Euler(pitch, yaw, 0);
-            transform.position = orbitCenter + rot * new Vector3(0, 0, -dist);
-            transform.rotation = rot;
-            if (target) target.position = orbitCenter;
+            yaw = 35; pitch = 30; dist = 16;
         }
     }
 }

@@ -274,16 +274,19 @@ namespace Rapyuta
             public Transform Build(string name, Transform parent, bool shadows = true)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = kv.Key;
                     mr.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -372,8 +375,9 @@ namespace Rapyuta
                 var b = new Batch(cubeMesh, cylMesh);
                 float z0 = Deck(f);
                 B(b, GW + 0.04f, GD + 0.04f, PanelT, GW / 2, GD / 2, z0 - PanelT / 2, M.panel);
-                for (int i = 0; i <= c.nx; i++) B(b, 0.012f, GD, 0.0012f, i * cX, GD / 2, z0 + 0.0006f, M.grid);
-                for (int j = 0; j <= c.ny; j++) B(b, GW, 0.012f, 0.0012f, GW / 2, j * cY, z0 + 0.0006f, M.grid);
+                // 흰 격자선: 이전 1.2 mm 두께라 패널과 번갈아 깜빡였음 → 3 mm
+                for (int i = 0; i <= c.nx; i++) B(b, 0.012f, GD, 0.003f, i * cX, GD / 2, z0 + 0.0015f, M.grid);
+                for (int j = 0; j <= c.ny; j++) B(b, GW, 0.012f, 0.003f, GW / 2, j * cY, z0 + 0.0015f, M.grid);
                 for (int i = 0; i <= c.nx; i++)
                     for (int j = 0; j <= c.ny; j++)
                     {
@@ -393,12 +397,12 @@ namespace Rapyuta
                         B(b, xb - xa, cY, PanelT, (xa + xb) / 2, -cY / 2, z0 - PanelT / 2, M.panel);
                         for (int k = 0; k <= c.stationN[s]; k++)
                         {
-                            B(b, 0.012f, cY, 0.0012f, xa + k * cX, -cY / 2, z0 + 0.0006f, M.grid);
+                            B(b, 0.012f, cY, 0.003f, xa + k * cX, -cY / 2, z0 + 0.0015f, M.grid);
                             B(b, Pad, Pad, foot, xa + k * cX, -cY, z0 + foot / 2, M.pad);
                         }
                         B(b, Pole, Pole, z0 - PanelT, xa, -cY, (z0 - PanelT) / 2, M.pole);
                         B(b, Pole, Pole, z0 - PanelT, xb, -cY, (z0 - PanelT) / 2, M.pole);
-                        B(b, xb - xa, 0.012f, 0.0012f, (xa + xb) / 2, -cY, z0 + 0.0006f, M.grid);
+                        B(b, xb - xa, 0.012f, 0.003f, (xa + xb) / 2, -cY, z0 + 0.0015f, M.grid);
                     }
                 b.Build("Floor_" + f, root);
             }
@@ -533,6 +537,7 @@ namespace Rapyuta
                     var go = Instantiate(prefab, root, false);
                     go.transform.localPosition = Vector3.zero;
                     M.Remap(go);
+                    EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지)
                     FitLongAxisX(go, RobotL);
                     foreach (var t in go.GetComponentsInChildren<Transform>()) if (t.name.StartsWith("LiftPlate")) plate = t;
                 }
@@ -583,7 +588,7 @@ namespace Rapyuta
                 {
                     go = new GameObject("BinTpl_" + v); go.transform.SetParent(holder, false);
                     var m = Instantiate(pf, go.transform, false); m.transform.localPosition = Vector3.zero;
-                    M.Remap(m); FitLongAxisX(m, BinW + 0.02f);
+                    M.Remap(m); FitLongAxisX(m, BinW + 0.02f); EquipFX.MeshFix.ResolveModel(m);
                 }
                 else go = FallbackBin(v, holder);
                 tpl.Add(go);
@@ -628,7 +633,7 @@ namespace Rapyuta
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.75f, 0.77f, 0.8f);
-            Cam.nearClipPlane = 0.02f; Cam.farClipPlane = 200f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.06f, 90f);   // near 0.02 → 0.06: 원거리 깊이 정밀도 향상 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -654,7 +659,20 @@ namespace Rapyuta
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.08f);
             var wb = prof.Add<WhiteBalance>(true); wb.temperature.Override(-3f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            // 모던 자막 (설비명 타이틀 + 샷 설명)
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "Multi-level Robotic ASRS",
+                name = "Rapyuta ASRS",
+                korean = "라퓨타 다층 로봇 자동창고",
+                spec = $"{config.nf}층  ·  {config.nx}×{config.ny} 셀  ·  로봇 {config.robots}대  ·  층간 리프트 {Sim.lifts.Count}대",
+                accent = new Color(0.30f, 0.78f, 1f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

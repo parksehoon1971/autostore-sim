@@ -157,6 +157,7 @@ namespace CaseLine
             equip = go.transform;
             Align(equip);
             M.Remap(go);
+            EquipFX.MeshFix.ResolveModel(go);   // 모델 안 겹친 면 분리 (깜빡임 방지, 형상·동작 변경 없음)
             foreach (var t in go.GetComponentsInChildren<Transform>(true))
             {
                 if (t.name == "Pusher") pusher = t;
@@ -368,15 +369,18 @@ namespace CaseLine
             public Transform Build(string name, Transform parent)
             {
                 var root = new GameObject(name).transform; root.SetParent(parent, false);
+                var built = new List<KeyValuePair<Material, Mesh>>();
                 foreach (var kv in parts)
                 {
                     var mesh = new Mesh { name = name + "_" + kv.Key.name, indexFormat = IndexFormat.UInt32 };
                     mesh.CombineMeshes(kv.Value.ToArray(), true, true);
                     mesh.RecalculateBounds();
+                    built.Add(new KeyValuePair<Material, Mesh>(kv.Key, mesh));
                     var go = new GameObject(kv.Key.name); go.transform.SetParent(root, false);
                     go.AddComponent<MeshFilter>().sharedMesh = mesh;
                     go.AddComponent<MeshRenderer>().sharedMaterial = kv.Key;
                 }
+                EquipFX.MeshFix.InflateByArea(built);   // 겹친 면 깜빡임 방지: 작은 재질(표시선·LED 등)을 살짝 앞으로
                 return root;
             }
         }
@@ -475,7 +479,7 @@ namespace CaseLine
             Cam = Camera.main;
             if (!Cam) { var cg = new GameObject("Main Camera"); cg.tag = "MainCamera"; Cam = cg.AddComponent<Camera>(); cg.AddComponent<AudioListener>(); }
             Cam.clearFlags = CameraClearFlags.SolidColor; Cam.backgroundColor = new Color(0.7f, 0.72f, 0.75f);
-            Cam.nearClipPlane = 0.02f; Cam.farClipPlane = 120f;
+            EquipFX.CameraFX.ConfigureClip(Cam, 0.05f, 60f);   // near 0.02 → 0.05: 원거리 깊이 정밀도 향상 (깜빡임 감소)
             Cam.usePhysicalProperties = true; Cam.sensorSize = new Vector2(36f, 20.25f); Cam.focalLength = 24f;
             var ucd = Cam.GetUniversalAdditionalCameraData();
             ucd.renderPostProcessing = true;
@@ -500,7 +504,21 @@ namespace CaseLine
             var mb = prof.Add<MotionBlur>(true); mb.intensity.Override(0.2f); mb.quality.Override(MotionBlurQuality.High);
             var fg = prof.Add<FilmGrain>(true); fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.08f);
             vol.sharedProfile = prof;
-            cine.dof = dof;
+            cine.dof = dof; cine.motionBlur = mb;
+
+            // 모던 자막 (설비명 타이틀 + 샷 설명)
+            var cap = gameObject.GetComponent<EquipFX.CaptionPresenter>();
+            if (cap == null) cap = gameObject.AddComponent<EquipFX.CaptionPresenter>();
+            cap.info = new EquipFX.CaptionInfo
+            {
+                category = "Case Erecting & Sealing Line",
+                name = "제함 · 봉함 라인",
+                korean = "반자동 제함기  →  충전·상부 접지 컨베이어  →  반자동 봉함기",
+                spec = "",
+                tag = "포장 자동화 라인",
+                accent = new Color(1f, 0.55f, 0.15f),
+            };
+            cap.source = cine;
         }
 
         // ------------------------------------------------------------------ HUD

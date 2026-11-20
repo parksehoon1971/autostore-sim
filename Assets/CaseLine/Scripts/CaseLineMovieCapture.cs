@@ -41,8 +41,9 @@ namespace CaseLine
             view.cinematicCamera = true;
             Time.captureFramerate = fps;
             HideHudWhileRecording = hideHud; IsRecording = true;
-            rt = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { antiAliasing = 1 };
-            rt.Create();
+            rt = EquipFX.CameraFX.MakeRecordTarget(width, height);   // 32비트 깊이 (원거리 깜빡임 방지)
+            var caption = GetComponent<EquipFX.CaptionPresenter>();
+            EquipFX.CaptionPresenter.Recording = true;
             cam.targetTexture = rt;
             for (int i = 0; i < 5; i++) yield return null;   // 반사 프로브/그림자 안정화
             view.ResetClock();
@@ -62,12 +63,13 @@ namespace CaseLine
                 {
                     yield return new WaitForEndOfFrame();
                     var prev = RenderTexture.active; RenderTexture.active = rt;
+                    if (caption != null) caption.DrawInto(rt);   // 설비명·샷 자막을 프레임에 합성 (후처리 뒤)
                     tex.ReadPixels(new Rect(0, 0, width, height), 0, 0, false); tex.Apply(false);
                     RenderTexture.active = prev;
                     enc.AddFrame(tex);
                 }
             }
-            cam.targetTexture = null; IsRecording = false; Time.captureFramerate = 0;
+            cam.targetTexture = null; IsRecording = false; EquipFX.CaptionPresenter.Recording = false; Time.captureFramerate = 0;
             Debug.Log($"[CaseLine] 영상 저장 완료: {path}");
             EditorUtility.RevealInFinder(path);
             EditorApplication.isPlaying = false;

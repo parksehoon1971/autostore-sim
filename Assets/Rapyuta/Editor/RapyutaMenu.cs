@@ -52,11 +52,14 @@ namespace Rapyuta.EditorTools
     // FBX 가져오기 설정 (Blender 출력)
     public class RapyutaModelImporter : AssetPostprocessor
     {
+        // 버전을 올리면 Unity 가 모델을 다시 가져옵니다 (Read/Write 켜기: 겹친 면 자동 보정이 메쉬를 읽어야 함)
+        public override uint GetVersion() => 2;
+
         void OnPreprocessModel()
         {
             if (!assetPath.Contains("Rapyuta/Resources/RapyutaModels")) return;
             var mi = (ModelImporter)assetImporter;
-            mi.importCameras = false; mi.importLights = false; mi.importAnimation = false;
+            mi.importCameras = false; mi.importLights = false; mi.isReadable = true; mi.importAnimation = false;
             mi.animationType = ModelImporterAnimationType.None;
             mi.materialImportMode = ModelImporterMaterialImportMode.ImportViaMaterialDescription;
             mi.bakeAxisConversion = true;
