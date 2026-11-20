@@ -265,6 +265,30 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 
 **Unity**: GitHub에서 PR을 머지한 뒤 `git pull`, 프로젝트를 열고 메뉴 **애니메이션 → T-Sorter → Open T-Sorter Scene** → **Play**. 30초 영상은 **애니메이션 → T-Sorter → Record 30s Movie (MP4, 1920x1080)** → `Recordings/tsorter_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(600초 워밍업 직후, seed 3)에서 시작합니다. 캡션은 씬의 `TSorterView` → `Show Caption` 으로 끌 수 있습니다.
 
+---
+
+# 셔틀랙 (다층 토트 셔틀 AS/RS) — 같은 방식의 장면
+
+높이 6.5 m, 14단 랙 통로 3개에서 단마다 셔틀 1대(모두 42대)가 레일을 따라 최고 4 m/s로 달리며 텔레스코픽 암으로 토트를 꺼내 앞쪽 출고 버퍼에 내려놓습니다. 통로 앞 리프트가 토트를 1층 컨베이어로 내리고, 컨베이어가 피킹 스테이션으로 가져간 뒤 입고 리프트를 거쳐 다시 랙에 넣습니다. 특정 제조사 제품이 아닌 일반 구성이며 로고가 없습니다. 같은 Unity 프로젝트 안에 **애니메이션 → 셔틀랙** 메뉴로 들어 있습니다.
+
+![셔틀랙 통로 입구](docs/images/shuttle_aisle.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/shuttle-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_shuttle_trace.js` | 시뮬레이션 → Blender 궤적 `blender/shuttle_trace.json` + 카메라 동선 `Assets/ShuttleRack/Resources/ShuttleCamera.json` |
+| `blender/shuttle_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR) |
+| `blender/out/shuttle/` | 셔틀·리프트 캐리지·토트 FBX/GLB, 렌더 이미지 |
+| `Assets/ShuttleRack/Scripts/ShuttleSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/ShuttleRack/Scripts/ShuttleView.cs` | 랙·레일·버퍼·리프트 탑·컨베이어·스테이션·셔틀·토트·조명·후처리 자동 구성, HUD |
+| `Assets/ShuttleRack/Scripts/ShuttleCamera.cs` | Blender와 같은 30초 카메라 (토트 하나를 따라감) / 마우스 오비트 |
+| `Assets/ShuttleRack/Scripts/ShuttleCaption.cs` | 장비 이름·단계 자막 (녹화 프레임에 합성) |
+| `Assets/ShuttleRack/Scripts/ShuttleMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/ShuttleRack/Editor/ShuttleMenu.cs` | `애니메이션 → 셔틀랙` 메뉴 |
+| `docs/shuttle-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과, 영상 동선 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 셔틀랙 → Open Shuttle Rack Scene** → **Play**. 30초 영상은 **애니메이션 → 셔틀랙 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/shuttlerack_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1,200초 워밍업 직후, seed 3)에서 시작하고, 카메라가 10단 토트 하나를 셔틀 → 출고 버퍼 → 리프트 → 컨베이어 → 스테이션까지 따라갑니다. 장비 이름과 단계 자막이 영상에 들어갑니다.
+
 **Blender** (저장소 루트에서):
 
 ```powershell
@@ -278,3 +302,16 @@ blender -b -P blender/tsorter_blender.py -- --out blender/out/tsorter --trace bl
 ```
 
 결과: 로봇 30대에서 시간당 약 2,150건 (공개 프로필 "2000 Parts per hour" 와 비슷한 규모). 핑거형 플랫폼 구성, 투입 스테이션 수동 투입 + 자동 스캔, 로봇 480×380×230 mm는 공개 자료이고 셀 피치·데크 높이·핑거 길이·속도·슈트 통 크기는 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/tsorter-research.md](docs/tsorter-research.md).
+
+---
+
+# 장면 생성 + 정지 이미지 (400 = 통로 입구, 470 = 리프트, 700 = 스테이션)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --still 400,470,700
+
+# 30초 영상 (GPU가 없으면 EEVEE: --engine eevee --samples 16 --res 1280x720)
+blender -b -P blender/shuttle_blender.py -- --out blender/out/shuttle --trace blender/shuttle_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# 다른 시뮬레이션 장면: node tools/export_shuttle_trace.js --seed 5 --warmup 900  (카메라는 새 주인공 토트에 맞춰 다시 계산됨)
+```
+
+결과: 셔틀 42대, 리프트 6대, 스테이션 3곳에서 약 1,800 토트/h, 평균 리드타임 32초. 병목은 리프트(가동률 73%)이고 셔틀 가동률은 19%입니다. 셔틀 4 m/s·2 m/s², 토트 600×400 mm는 공개 자료의 일반적인 값이고 리프트 속도·단 간격·버퍼 길이 등은 가정입니다. 자세한 내용은 [docs/shuttle-research.md](docs/shuttle-research.md).

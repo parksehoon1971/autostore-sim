@@ -30,5 +30,10 @@ blender/out/haipick/frames/
 blender/out/haipick/*.blend
 blender/out/skypod/frames/
 blender/out/skypod/*.blend
+<<<<<<< HEAD
 blender/out/tsorter/frames/
 blender/out/tsorter/*.blend
+=======
+blender/out/shuttle/frames/
+blender/out/shuttle/*.blend
+>>>>>>> pr/10
