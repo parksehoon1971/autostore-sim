@@ -70,14 +70,14 @@ namespace EquipFX
             Vector2 delta = Vector2.zero; float scroll = 0; bool drag = false;
 #if ENABLE_INPUT_SYSTEM
             var m = Mouse.current;
-            if (m != null) { drag = m.rightButton.isPressed || m.leftButton.isPressed; delta = m.delta.ReadValue() * 0.2f; scroll = m.scroll.ReadValue().y * 0.01f; }
+            if (m != null) { drag = m.rightButton.isPressed || m.leftButton.isPressed; delta = m.delta.ReadValue() * 0.2f; scroll = EquipFX.HudInput.WheelNotches(m.scroll.ReadValue().y); }
 #elif ENABLE_LEGACY_INPUT_MANAGER
             drag = Input.GetMouseButton(0) || Input.GetMouseButton(1);
-            delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 3f; scroll = Input.mouseScrollDelta.y * 0.5f;
+            delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 3f; scroll = Input.mouseScrollDelta.y;
 #endif
             if (HudInput.PointerOverUi) { drag = false; scroll = 0; }   // 통합 HUD 위에서는 오비트 안 함
             if (drag) { yaw += delta.x; pitch = Mathf.Clamp(pitch - delta.y, minPitch, 85); }
-            dist = Mathf.Clamp(dist - scroll, 2, maxDist);
+            dist = Mathf.Clamp(dist * Mathf.Pow(0.88f, scroll), 2, maxDist);
             var rot = Quaternion.Euler(pitch, yaw, 0);
             transform.position = orbitCenter + rot * new Vector3(0, 0, -dist);
             transform.rotation = rot;

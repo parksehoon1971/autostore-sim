@@ -35,6 +35,16 @@ namespace EquipFXEditor
             };
             // HUD 의 닫기 단추: 실행 파일에서는 Application.Quit(), 에디터에서는 플레이 모드 종료
             EquipHud.EditorQuit = () => EditorApplication.isPlaying = false;
+            // 각 설비 Record 메뉴는 SessionState 에 '플레이 시 녹화' 표시를 남김 → 그때는 배치 공간으로 바꾸지 않음
+            EquipHud.EditorRecordPending = () =>
+            {
+                foreach (var e in EquipCatalog.All)
+                {
+                    var f = e.captureType?.GetField("SessionKey", BindingFlags.Public | BindingFlags.Static);
+                    if (f != null && f.IsLiteral && f.GetRawConstantValue() is string key && SessionState.GetBool(key, false)) return true;
+                }
+                return false;
+            };
             EditorApplication.playModeStateChanged += OnPlayMode;
         }
 

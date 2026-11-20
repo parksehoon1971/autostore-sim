@@ -28,6 +28,13 @@ namespace EquipFX
     {
         public static bool PointerOverUi;
         public static bool Typing;
+
+        // 마우스 휠 값 → 눈금 수. Input System 은 플랫폼·버전에 따라 한 눈금이 ±120 또는 ±1 이므로 둘 다 맞춤
+        public static float WheelNotches(float raw)
+        {
+            if (Mathf.Abs(raw) >= 20f) raw /= 120f;
+            return Mathf.Clamp(raw, -4f, 4f);
+        }
     }
 
     public class EquipHud : MonoBehaviour
@@ -42,6 +49,7 @@ namespace EquipFX
         public static Func<string, bool> EditorLoadScene;
         public static Action<EquipEntry> EditorRecord;
         public static Action EditorQuit;
+        public static Func<bool> EditorRecordPending;   // 에디터 녹화 메뉴로 플레이 모드가 시작됐는지
 
         public static EquipHud Instance { get; private set; }
 
@@ -63,7 +71,7 @@ namespace EquipFX
         LayoutWorld world;             // 배치 모드면 메인 공간
         PlacedModule selModule;
         float speed = 1f;
-        bool paused, loop = true, captionsOn = true, hudVisible = true, recording, loading;
+        bool paused, loop = true, captionsOn = true, hudVisible = true, recording, loading, recordPending;
         float clockStart = -1f, ffTarget = -1f, pendingSeek = -1f;
         float nextUiRefresh, toastUntil;
         bool overTop, overLeft, overDash, overRight, plantDirty = true, marksSet;
@@ -95,6 +103,12 @@ namespace EquipFX
         // 속성
         VisualElement propBody, paramBox, specBox, specBody, moduleBox;
         Label catLbl, titleLbl, koLbl, descLbl, posLbl;
+        // 하위 오브젝트 (로봇·셔틀·토트 …)
+        VisualElement partCard, partRowsBox;
+        Label partTitleLbl, partSubLbl;
+        PartRef shownPart;
+        readonly List<(string key, Label val)> partRows = new List<(string, Label)>();
+        readonly List<(string key, string val)> partTmp = new List<(string, string)>();
         readonly List<(ParamDef def, TextField field, FieldInfo fi)> paramFields = new List<(ParamDef, TextField, FieldInfo)>();
 
         // ------------------------------------------------------------------ 시작
@@ -108,12 +122,22 @@ namespace EquipFX
             CreateDocument();
             BuildContent();
             DetectScene();
+            recordPending = RecordPending();
         }
 
         void Start()
         {
-            // 설비도 배치 공간도 없는 장면(빈 장면, 실행 파일 첫 장면)에서 시작하면 배치 공간을 엶
-            if (entry == null && world == null && !recording) OpenLayout();
+            // 배치가 기본: 어떤 장면에서 Play 해도 배치 공간으로 시작 (녹화 메뉴로 시작한 경우만 그 설비 애니메이션 그대로)
+            if (world == null && !recording && !recordPending) OpenLayout();
+        }
+
+        bool RecordPending()
+        {
+            if (EditorRecordPending != null && EditorRecordPending()) return true;
+            if (entry == null || entry.captureType == null || view == null) return false;
+            var cap = view.GetComponent(entry.captureType);
+            var f = entry.captureType.GetField("recordOnPlay", BindingFlags.Instance | BindingFlags.Public);
+            return cap != null && f != null && f.FieldType == typeof(bool) && (bool)f.GetValue(cap);
         }
 
         void OnDestroy()
@@ -175,7 +199,9 @@ namespace EquipFX
 
         void OnSelectionChanged()
         {
-            selModule = world != null ? world.Selected : null;
+            var newSel = world != null ? world.Selected : null;
+            if (newSel != null && newSel == selModule) { RefreshPart(); return; }   // 같은 설비 안에서 하위 오브젝트만 바뀜
+            selModule = newSel;
             entry = selModule != null ? selModule.entry : null;
             view = selModule != null ? selModule.view : null;
             samples.Clear(); rates.Clear();
@@ -557,7 +583,7 @@ namespace EquipFX
         {
             var docRoot = doc.rootVisualElement;
             docRoot.Clear();
-            cards.Clear(); kpiLabels.Clear(); plantRows.Clear(); plantUnitLbls.Clear(); paramFields.Clear();
+            cards.Clear(); kpiLabels.Clear(); plantRows.Clear(); plantUnitLbls.Clear(); paramFields.Clear(); partRows.Clear(); shownPart = null;
             overTop = overLeft = overDash = overRight = false; HudInput.PointerOverUi = false;
             docRoot.pickingMode = PickingMode.Ignore;
             var font = HudFont.Get();
@@ -746,7 +772,7 @@ namespace EquipFX
             var sub = HudStyle.MakeLabel("끌어서 바닥에 설치", 12, HudStyle.Muted); HudStyle.Margin(sub, 2, 0, 0, 0);
             leftPanel.Add(sub);
 
-            var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
+            var sv = HudStyle.MakeScroll();
             sv.style.flexGrow = 1; HudStyle.Margin(sv, 6, 0, 0, 0);
             leftPanel.Add(sv);
             string lastCat = null;
@@ -795,7 +821,7 @@ namespace EquipFX
             body.Add(dashPanel);
             var t = HudStyle.MakeLabel("대시보드", 15, HudStyle.Strong, true);
             dashPanel.Add(t);
-            var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
+            var sv = HudStyle.MakeScroll();
             sv.style.flexGrow = 1;
             dashPanel.Add(sv);
 
@@ -899,7 +925,7 @@ namespace EquipFX
             body.Add(rightPanel);
             var t = HudStyle.MakeLabel("속성", 15, HudStyle.Strong, true);
             rightPanel.Add(t);
-            var sv = new ScrollView(ScrollViewMode.Vertical) { horizontalScrollerVisibility = ScrollerVisibility.Hidden };
+            var sv = HudStyle.MakeScroll();
             sv.style.flexGrow = 1;
             rightPanel.Add(sv);
             propBody = sv;
@@ -908,6 +934,25 @@ namespace EquipFX
             titleLbl = HudStyle.MakeLabel("", 20, HudStyle.Strong, true); titleLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(titleLbl, 4, 0, 0, 0);
             koLbl = HudStyle.MakeLabel("", 12, HudStyle.Text); koLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(koLbl, 2, 0, 0, 0);
             descLbl = HudStyle.MakeLabel("", 12, HudStyle.Muted); descLbl.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(descLbl, 8, 0, 0, 0);
+
+            // 클릭한 하위 오브젝트 카드 (설비 속성 위)
+            partCard = new VisualElement();
+            partCard.style.backgroundColor = HudStyle.AccentDim; HudStyle.Radius(partCard, 12); HudStyle.Pad(partCard, 12, 12);
+            HudStyle.Margin(partCard, 12, 0, 4, 0);
+            var ph = Row();
+            var phText = new VisualElement { pickingMode = PickingMode.Ignore }; phText.style.flexGrow = 1; phText.style.flexShrink = 1;
+            partTitleLbl = HudStyle.MakeLabel("", 16, HudStyle.Strong, true);
+            partSubLbl = HudStyle.MakeLabel("", 11, HudStyle.Muted); HudStyle.Margin(partSubLbl, 2, 0, 0, 0);
+            phText.Add(partTitleLbl); phText.Add(partSubLbl);
+            var back = HudStyle.MakeButton("설비 전체", () => world?.Select(selModule));
+            back.style.height = 26; back.style.fontSize = 11; HudStyle.Pad(back, 0, 10);
+            ph.Add(phText); ph.Add(back);
+            partCard.Add(ph);
+            partRowsBox = new VisualElement { pickingMode = PickingMode.Ignore }; HudStyle.Margin(partRowsBox, 10, 0, 0, 0);
+            partCard.Add(partRowsBox);
+            partCard.style.display = DisplayStyle.None;
+
+            sv.Add(partCard);
             sv.Add(catLbl); sv.Add(titleLbl); sv.Add(koLbl); sv.Add(descLbl);
 
             // 배치 모드: 위치 · 동작
@@ -958,6 +1003,7 @@ namespace EquipFX
             tpUnitLbl.text = has ? entry.throughputUnit : "";
             selDashBox.style.display = has ? DisplayStyle.Flex : DisplayStyle.None;
             moduleBox.style.display = LayoutMode && selModule != null ? DisplayStyle.Flex : DisplayStyle.None;
+            RefreshPart();
             plantDirty = true;
             if (!rebuild) return;
 
@@ -1101,6 +1147,7 @@ namespace EquipFX
             if (!captionsOn && !LayoutMode) SetCaptions(false);
             if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
             if (LayoutMode) UpdatePlant();
+            if (shownPart != null) UpdatePartRows();
 
             if (!Ready)
             {
@@ -1143,6 +1190,96 @@ namespace EquipFX
             foreach (var kv in plantUnitLbls)
                 kv.Value.text = sums.TryGetValue(kv.Key, out var s) ? s.ToString("N0", CultureInfo.InvariantCulture) : "—";
         }
+
+        // ---------------------------------------------------------------- 하위 오브젝트 속성
+        void RefreshPart()
+        {
+            if (partCard == null) return;
+            var p = LayoutMode && world != null ? world.SelectedPart : null;
+            if (p != null && p.module != selModule) p = null;
+            if (p != shownPart) { partRowsBox.Clear(); partRows.Clear(); }
+            shownPart = p;
+            partCard.style.display = p != null ? DisplayStyle.Flex : DisplayStyle.None;
+            if (p == null) return;
+            partTitleLbl.text = p.Label;
+            partSubLbl.text = $"{p.module.Label} 의 하위 오브젝트  ·  Esc = 설비 전체";
+            UpdatePartRows();
+            propBody?.ScrollTo(partCard);
+        }
+
+        void UpdatePartRows()
+        {
+            var p = shownPart;
+            if (p == null || p.t == null) return;
+            partTmp.Clear();
+            var w = p.t.position - (p.module != null ? p.module.transform.position : Vector3.zero);
+            partTmp.Add(("위치 (설비 기준)", $"X {w.x:0.00}  Y {w.y:0.00}  Z {w.z:0.00} m"));
+            var item = p.SimItem();
+            if (item != null)
+                foreach (var f in item.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public))
+                {
+                    var v = FormatPartValue(f.GetValue(item), f.FieldType, out bool show);
+                    if (show) partTmp.Add((PartFieldName(f.Name), v));
+                }
+            else if (p.def.simList != null) partTmp.Add(("상태", "—"));
+
+            bool same = partRows.Count == partTmp.Count;
+            for (int i = 0; same && i < partTmp.Count; i++) same = partRows[i].key == partTmp[i].key;
+            if (!same)
+            {
+                partRowsBox.Clear(); partRows.Clear();
+                foreach (var (k, v) in partTmp)
+                {
+                    var row = Row(); row.style.justifyContent = Justify.SpaceBetween; HudStyle.Margin(row, 0, 0, 4, 0);
+                    var kl = HudStyle.MakeLabel(k, 11, HudStyle.Muted); kl.style.flexShrink = 0; HudStyle.Margin(kl, 0, 10, 0, 0);
+                    var vl = HudStyle.MakeLabel(v, 12, HudStyle.Strong); vl.style.unityTextAlign = TextAnchor.MiddleRight;
+                    vl.style.whiteSpace = WhiteSpace.Normal; vl.style.flexShrink = 1;
+                    row.Add(kl); row.Add(vl);
+                    partRowsBox.Add(row);
+                    partRows.Add((k, vl));
+                }
+            }
+            else for (int i = 0; i < partTmp.Count; i++) partRows[i].val.text = partTmp[i].val;
+        }
+
+        static string FormatPartValue(object o, Type t, out bool show)
+        {
+            show = true;
+            if (t == typeof(double) || t == typeof(float)) return Convert.ToDouble(o).ToString("0.##", CultureInfo.InvariantCulture);
+            if (t == typeof(int) || t == typeof(long)) return Convert.ToString(o, CultureInfo.InvariantCulture);
+            if (t == typeof(bool)) return (bool)o ? "예" : "아니오";
+            if (t == typeof(string)) return string.IsNullOrEmpty((string)o) ? "—" : (string)o;
+            if (t.IsEnum) return o.ToString();
+            if (t == typeof(Vector3) || t == typeof(Vector2)) return o.ToString();
+            // 작업 객체 등: Kind / kind 같은 이름 속성이 있으면 그 값
+            if (!t.IsValueType && !(typeof(System.Collections.IEnumerable).IsAssignableFrom(t)))
+            {
+                var kp = t.GetProperty("Kind", BindingFlags.Instance | BindingFlags.Public);
+                if (kp != null && kp.PropertyType == typeof(string)) return o == null ? "없음" : (string)kp.GetValue(o);
+                if (t.IsInterface)
+                {
+                    if (o == null) return "없음";
+                    var kp2 = o.GetType().GetProperty("Kind", BindingFlags.Instance | BindingFlags.Public);
+                    if (kp2 != null && kp2.PropertyType == typeof(string)) return (string)kp2.GetValue(o);
+                }
+            }
+            show = false;
+            return null;
+        }
+
+        static readonly Dictionary<string, string> PartNames = new Dictionary<string, string>
+        {
+            { "id", "번호" }, { "state", "상태" }, { "kind", "종류" }, { "task", "작업" },
+            { "carry", "운반 중 (번호)" }, { "x", "x" }, { "y", "y" }, { "z", "z" },
+            { "px", "위치 x" }, { "py", "위치 y" }, { "pz", "위치 z" },
+            { "busyTime", "가동 시간 (s)" }, { "distance", "이동 거리 (m)" }, { "waitT", "대기 시간 (s)" }, { "blocked", "막힌 시간 (s)" },
+            { "deliveries", "배송 횟수" }, { "returns", "반납 횟수" }, { "digs", "디깅 횟수" }, { "picked", "피킹 수" },
+            { "count", "개수" }, { "received", "받은 수" }, { "load", "적재량" }, { "aisle", "통로" }, { "level", "단" },
+            { "l", "단" }, { "a", "통로" }, { "side", "방향" }, { "arm", "암" }, { "fork", "포크" }, { "lift", "리프트" },
+            { "cur", "현재 작업" }, { "slot", "슬롯" }, { "r", "로봇" }, { "s", "슬롯" }, { "u", "진행" }, { "g", "그리퍼 높이" },
+        };
+
+        static string PartFieldName(string n) => PartNames.TryGetValue(n, out var k) ? $"{k}" : n;
 
         void Toast(string msg)
         {
