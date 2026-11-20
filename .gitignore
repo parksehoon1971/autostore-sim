@@ -26,3 +26,5 @@ blender/out/libiao/frames/
 blender/out/libiao/*.blend
 blender/out/rapyuta/frames/
 blender/out/rapyuta/*.blend
+blender/out/haipick/frames/
+blender/out/haipick/*.blend
