@@ -43,6 +43,7 @@ namespace TSorter
         public void Init(TSorterView v)
         {
             view = v;
+            { var sz = EquipFX.RecordQuality.OutputSize; width = sz.x; height = sz.y; }   // 녹화 화질 프리셋과 같은 해상도 (4K 자막 선명)
             font = Font.CreateDynamicFontFromOSFont(new[] { "Malgun Gothic", "맑은 고딕", "Segoe UI", "Arial" }, 48);
             RT = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { name = "TSorterCaptionRT" };
             RT.Create();

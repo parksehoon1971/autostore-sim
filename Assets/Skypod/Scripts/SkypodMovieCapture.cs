@@ -42,15 +42,17 @@ namespace Skypod
             view.cinematicCamera = true;
             Time.captureFramerate = fps;
             HideHudWhileRecording = hideHud; IsRecording = true;
-            rt = EquipFX.CameraFX.MakeRecordTarget(width, height);   // 32비트 깊이 (원거리 깜빡임 방지)
+            // 공용 녹화 화질 (메뉴 애니메이션 > 녹화 화질): 해상도·MSAA·슈퍼샘플링·그림자. 32비트 깊이 유지 (원거리 깜빡임 방지)
+            var rs = EquipFX.RecordSession.Begin(cam);
+            width = rs.Width; height = rs.Height; rt = rs.Frame;
             var caption = GetComponent<EquipFX.CaptionPresenter>();
             EquipFX.CaptionPresenter.Recording = true;
-            cam.targetTexture = rt;
+            cam.targetTexture = rs.CameraTarget;
             // 반사 프로브/그림자 안정화용 프레임
             for (int i = 0; i < 5; i++) yield return null;
             var cc = cam.GetComponent<SkypodCamera>(); if (cc != null) cc.Restart();
             view.simSpeed = 1f;
-            var path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", outputPath));
+            var path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", EquipFX.RecordQuality.DecoratePath(outputPath)));
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             var tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
             var attr = new VideoTrackAttributes
@@ -64,6 +66,7 @@ namespace Skypod
                 for (frame = 0; frame < total; frame++)
                 {
                     yield return new WaitForEndOfFrame();
+                    rs.Resolve();   // 슈퍼샘플·MSAA → 출력 해상도
                     var prev = RenderTexture.active; RenderTexture.active = rt;
                     if (caption != null) caption.DrawInto(rt);   // 설비명·샷 자막을 프레임에 합성 (후처리 뒤)
                     tex.ReadPixels(new Rect(0, 0, width, height), 0, 0, false); tex.Apply(false);
@@ -71,7 +74,7 @@ namespace Skypod
                     enc.AddFrame(tex);
                 }
             }
-            cam.targetTexture = null; IsRecording = false; EquipFX.CaptionPresenter.Recording = false; Time.captureFramerate = 0;
+            rs.End(); IsRecording = false; EquipFX.CaptionPresenter.Recording = false; Time.captureFramerate = 0;
             Debug.Log($"[Skypod] 영상 저장 완료: {path}");
             EditorUtility.RevealInFinder(path);
             EditorApplication.isPlaying = false;
