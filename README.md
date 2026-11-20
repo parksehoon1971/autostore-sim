@@ -231,6 +231,8 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 
 ![수평형 캐러셀 피킹 포드](docs/images/carousel_horizontal.png)
 
+![수직형 캐러셀 작업창](docs/images/carousel_vertical_window.png)
+
 | 경로 | 내용 |
 |---|---|
 | `web/carousel-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
