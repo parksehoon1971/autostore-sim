@@ -25,7 +25,7 @@ namespace AutoStore.EditorTools
             };
         }
 
-        [MenuItem("AutoStore/Create or Reset Simulation Scene", priority = 1)]
+        [MenuItem("애니메이션/AutoStore/Create or Reset Simulation Scene", priority = 1)]
         public static void CreateScene()
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
@@ -41,14 +41,14 @@ namespace AutoStore.EditorTools
             Debug.Log("[AutoStore] 씬 생성: " + ScenePath + "  ▶ Play 를 누르세요.");
         }
 
-        [MenuItem("AutoStore/Open Simulation Scene", priority = 2)]
+        [MenuItem("애니메이션/AutoStore/Open Simulation Scene", priority = 2)]
         public static void OpenScene()
         {
             if (!File.Exists(ScenePath)) CreateScene();
             if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) EditorSceneManager.OpenScene(ScenePath);
         }
 
-        [MenuItem("AutoStore/Record 30s Movie (MP4, 1920x1080)", priority = 20)]
+        [MenuItem("애니메이션/AutoStore/Record 30s Movie (MP4, 1920x1080)", priority = 20)]
         public static void Record()
         {
             if (EditorApplication.isPlaying) { Debug.LogWarning("플레이 모드를 먼저 종료하세요."); return; }
@@ -57,7 +57,7 @@ namespace AutoStore.EditorTools
             EditorApplication.isPlaying = true;
         }
 
-        [MenuItem("AutoStore/Open Recordings Folder", priority = 21)]
+        [MenuItem("애니메이션/AutoStore/Open Recordings Folder", priority = 21)]
         public static void OpenRecordings()
         {
             var p = Path.GetFullPath("Recordings"); Directory.CreateDirectory(p); EditorUtility.RevealInFinder(p);
