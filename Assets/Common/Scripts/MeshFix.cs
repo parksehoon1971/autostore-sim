@@ -2,6 +2,8 @@
 // 규칙: 한 덩어리(모델 또는 Batch) 안에서 재질을 면적 순으로 정렬하고, 작은 재질(라벨, LED, 손잡이, 표시선 등 디테일)일수록
 //       면 법선 방향으로 조금씩 더 바깥으로 밀어냅니다. 겹친 면은 항상 디테일 쪽이 앞에 보이게 됩니다.
 // 밀어내는 양은 순위당 0.8 mm (최대 4.8 mm) 로, 화면에서 형상 차이는 보이지 않습니다.
+// 각진 상자(평면 셰이딩: 모서리 정점이 면마다 따로 있음)도 면끼리 붙은 채로 밀리도록, 같은 자리 정점들은
+// 그 자리에 모인 모든 면에서 거리 d 가 되는 한 점으로 같이 옮깁니다 (모서리 틈으로 건너편이 보이지 않게).
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -22,8 +24,57 @@ namespace EquipFX
             if (d <= 0 || mesh == null) return;
             var v = mesh.vertices; var n = mesh.normals;
             if (n == null || n.Length != v.Length) return;
-            for (int i = 0; i < v.Length; i++) v[i] += n[i] * d;
+            var used = new List<int>();
+            for (int s = 0; s < mesh.subMeshCount; s++) used.AddRange(mesh.GetTriangles(s));
+            var off = JoinedOffsets(v, n, used);
+            for (int i = 0; i < v.Length; i++) if (off.TryGetValue(i, out var o)) v[i] += o * d;
             mesh.vertices = v; mesh.RecalculateBounds();
+        }
+
+        // 거리 1 만큼 밀 때 각 정점의 이동 벡터. 같은 자리(허용오차 안)에 있는 정점들을 묶어,
+        // 그 자리의 서로 다른 법선 n_i 모두에 대해 n_i · x = 1 을 만족하는 x 를 구함 (상자 모서리 = 세 법선의 합).
+        // 반복 투영(Kaczmarz)으로 최소 노름 해를 구하고, 거의 마주 보는 법선처럼 해가 너무 커지면 평균 법선으로 대신함.
+        public static Dictionary<int, Vector3> JoinedOffsets(Vector3[] v, Vector3[] n, IList<int> indices)
+        {
+            var res = new Dictionary<int, Vector3>();
+            if (indices.Count == 0) return res;
+            Vector3 lo = v[indices[0]], hi = lo;
+            foreach (int i in indices) { lo = Vector3.Min(lo, v[i]); hi = Vector3.Max(hi, v[i]); }
+            var ext = hi - lo;
+            float tol = Mathf.Max(1e-7f, Mathf.Max(ext.x, Mathf.Max(ext.y, ext.z)) * 2e-6f);
+            var groups = new Dictionary<(long, long, long), List<int>>();
+            foreach (int i in indices)
+            {
+                if (res.ContainsKey(i)) continue;
+                res[i] = Vector3.zero;
+                var p = v[i];
+                var key = ((long)Mathf.Round(p.x / tol), (long)Mathf.Round(p.y / tol), (long)Mathf.Round(p.z / tol));
+                if (!groups.TryGetValue(key, out var g)) groups[key] = g = new List<int>();
+                g.Add(i);
+            }
+            var ns = new List<Vector3>();
+            foreach (var g in groups.Values)
+            {
+                ns.Clear(); var sum = Vector3.zero;
+                foreach (int i in g)
+                {
+                    var ni = n[i]; if (ni.sqrMagnitude < 1e-12f) continue; ni.Normalize();
+                    bool dup = false; foreach (var q in ns) if (Vector3.Dot(q, ni) > 0.9999f) { dup = true; break; }
+                    if (!dup) { ns.Add(ni); sum += ni; }
+                }
+                Vector3 x;
+                if (ns.Count == 0) x = Vector3.zero;
+                else if (ns.Count == 1) x = ns[0];
+                else
+                {
+                    x = Vector3.zero;
+                    for (int it = 0; it < 32; it++) foreach (var q in ns) x += q * (1f - Vector3.Dot(q, x));
+                    float err = 0; foreach (var q in ns) err = Mathf.Max(err, Mathf.Abs(1f - Vector3.Dot(q, x)));
+                    if (x.magnitude > 2.5f || err > 0.05f) x = sum.sqrMagnitude > 1e-6f ? sum.normalized : Vector3.zero;   // 마주 보는 면 등
+                }
+                foreach (int i in g) res[i] = x;
+            }
+            return res;
         }
 
         // Batch 처럼 재질마다 하나로 합친 메쉬들: 넓은 재질부터 순위를 매겨 작은 재질일수록 바깥으로 밀어냄
@@ -110,6 +161,7 @@ namespace EquipFX
             {
                 float d = offset(s);
                 var tri = src.GetTriangles(s);
+                var off = hasN && d != 0 ? JoinedOffsets(v, n, tri) : null;
                 var map = new Dictionary<int, int>();
                 var nt2 = new int[tri.Length];
                 for (int i = 0; i < tri.Length; i++)
@@ -118,7 +170,7 @@ namespace EquipFX
                     if (!map.TryGetValue(o, out int ni))
                     {
                         ni = nv.Count; map[o] = ni;
-                        nv.Add(hasN ? v[o] + n[o] * d : v[o]);
+                        nv.Add(off != null ? v[o] + off[o] * d : v[o]);
                         if (hasN) nn.Add(n[o]);
                         if (hasT) nt.Add(t4[o]);
                         if (hasUV) nuv.Add(uv[o]);
