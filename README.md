@@ -313,6 +313,32 @@ blender -b -P blender/skypod_blender.py -- --out blender/out/skypod --trace blen
 
 **Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → AirRob → Open AirRob Scene** → **Play**. 30초 영상은 **애니메이션 → AirRob → Record 30s Movie (MP4, 1920x1080)** → `Recordings/airrob_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(1342초 워밍업 직후, seed 3)에서 시작해 같은 장면이 나옵니다.
 
+---
+
+# 캐러셀 (수평형 + 수직형) — 같은 방식의 여섯 번째 장면
+
+한 장면에 두 가지 회전 선반을 나란히 놓았습니다. 왼쪽은 **수평형 캐러셀** 2대로 이루어진 피킹 포드입니다. 타원 궤도를 도는 6단 선반 캐리어 26개가 가까운 방향으로 돌아 목표 캐리어를 앞쪽 끝(피킹면)에 세우고, 작업자 한 명이 한 대에서 꺼내는 동안 다른 한 대는 다음 캐리어로 미리 돌아갑니다. 오른쪽은 **수직형 캐러셀**로, 높이 약 6.9 m 캐비닛 안에서 폭 2.45 m 트레이 20개가 위아래로 순환하며 목표 트레이를 허리 높이 작업창에 세웁니다. 두 장비 모두 피킹 라이트가 꺼낼 칸을, 풋 라이트가 넣을 주문 토트를 가리킵니다. 영상에는 장비 이름 자막이 들어가며, 같은 Unity 프로젝트 안에 **애니메이션 → 캐러셀** 메뉴로 들어 있습니다.
+
+![수평형 캐러셀 피킹 포드](docs/images/carousel_horizontal.png)
+
+![수직형 캐러셀 작업창](docs/images/carousel_vertical_window.png)
+
+| 경로 | 내용 |
+|---|---|
+| `web/carousel-sim-core.js` | 시뮬레이션 코어 (JavaScript) |
+| `tools/export_carousel_trace.js` | 시뮬레이션 → Blender 궤적 `blender/carousel_trace.json` |
+| `blender/carousel_blender.py` | Blender 모델·장면·애니메이션·렌더 스크립트 (Cycles, 절차적 PBR, 자막 합성) |
+| `Assets/Carousel/Scripts/CarouselSim.cs` | 시뮬레이션 코어 (C#, JS와 같은 결과) |
+| `Assets/Carousel/Scripts/CarouselView.cs` | 궤도·캐비닛·캐리어·트레이·피킹 라이트·조명·후처리 자동 구성, HUD |
+| `Assets/Carousel/Scripts/CarouselCamera.cs` | Blender와 같은 30초 카메라 동선 / 마우스 오비트 |
+| `Assets/Carousel/Scripts/CarouselCaption.cs` | 장비 이름 자막 (후처리를 받지 않는 UI 전용 카메라, 녹화에 포함) |
+| `Assets/Carousel/Scripts/CarouselMovieCapture.cs` | 30초 MP4 녹화 (에디터 내장 인코더) |
+| `Assets/Carousel/Editor/CarouselMenu.cs` | `애니메이션 → 캐러셀` 메뉴 |
+| `Assets/Carousel/Resources/CarouselModels/` | Blender에서 내보낸 캐리어 3종·트레이 2종 FBX (없으면 같은 치수의 기본 도형) |
+| `docs/carousel-research.md` | 조사 요약, 출처, 가정한 수치, 시뮬레이션 결과 |
+
+**Unity**: `git pull` 후 프로젝트를 열고 메뉴 **애니메이션 → 캐러셀 → Open Carousel Scene** → **Play**. 30초 영상은 **애니메이션 → 캐러셀 → Record 30s Movie (MP4, 1920x1080)** → `Recordings/carousel_unity_30s.mp4`. 녹화는 Blender 궤적과 같은 시점(300초 워밍업 직후, seed 22)에서 시작해 같은 장면이 나옵니다.
+
 **Blender** (저장소 루트에서):
 
 ```powershell
@@ -352,3 +378,17 @@ blender -b -P blender/airrob_blender.py -- --out blender/out/airrob --trace blen
 ```
 
 결과: 바닥 로봇 16대, 주문 360 /h 에서 약 320 토트/h, 평균 리드타임 약 190초, AirRob 가동률 72%. 통로 4개에서 약 380 토트/h가 한계이고 병목은 AirRob 입니다. AirRob 폭 764 mm·깊이 820 mm, 수평 2 m/s·수직 1 m/s, 당기기·밀기 4.5 s, 토트 530×410 mm, 통로 850 mm는 공개 수치이고 마스트·훅 형상, 바닥 로봇, 단 간격, 색은 가정입니다. Libiao 제품 도면이 아닙니다. 자세한 내용은 [docs/airrob-research.md](docs/airrob-research.md).
+
+---
+
+# 장면 생성 + 정지 이미지 (181 프레임 = 수평형 피킹면, 586 프레임 = 수직형 작업창)
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --still 181,586 --gpu
+
+# 30초 영상 (1920x1080, 30fps, GPU). ffmpeg가 PATH에 있으면 carousel_30s.mp4 로 합쳐짐. 자막은 Pillow가 있을 때 PNG에 합성
+blender -b -P blender/carousel_blender.py -- --out blender/out/carousel --trace blender/carousel_trace.json --anim --gpu --res 1920x1080 --samples 128
+
+# GPU가 없으면 EEVEE: --anim --engine eevee --samples 16 --res 1280x720
+# 다른 시뮬레이션 장면: node tools/export_carousel_trace.js --seed 5  (카메라 동선은 seed 22, warmup 300 기준)
+```
+
+결과 (seed 1~3 평균, 1시간): 수평형 포드 약 570 줄/h (리드타임 119초, 작업자 가동률 63%, 공개 수치 "최대 550 줄/h"와 같은 수준), 수직형 약 320 줄/h (0.20 m/s 기준 상한에 가까움). 회전 속도·캐리어 치수·피킹 시간은 공개 카탈로그의 일반적인 범위에서 잡은 가정이며 특정 제조사 도면이 아닙니다. 자세한 내용은 [docs/carousel-research.md](docs/carousel-research.md).
