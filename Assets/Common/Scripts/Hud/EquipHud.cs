@@ -105,6 +105,9 @@ namespace EquipFX
         Label mfdSummary;
         Button tab3dBtn, tabMfdBtn;
         bool mfdOn, overMfd, cadOn;
+        Button camOrbitLBtn, camFpBtn, camEqBtn, camCargoBtn;
+        Label layoutHint;
+        const string HintOrbit = "여백 끌기 화면 이동 · 클릭 선택 · 설비 끌어 옮기기 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 휠 확대";
         VisualElement cadPanel;
         CadView cad;
         Button tabCadBtn;
@@ -208,6 +211,7 @@ namespace EquipFX
             world.CargoChanged += OnCargoChanged;
             world.SiteChanged += OnSiteChanged;
             world.Notice += OnNotice;
+            world.CameraModeChanged += UpdateCamButtons;
             world.DrawingChanged += OnDrawingChanged;
             entry = null; view = null; selModule = null; clockStart = -1f; ffTarget = -1f; pendingSeek = -1f;
             samples.Clear(); rates.Clear(); plantDirty = true;
@@ -222,6 +226,7 @@ namespace EquipFX
             world.CargoChanged -= OnCargoChanged;
             world.SiteChanged -= OnSiteChanged;
             world.Notice -= OnNotice;
+            world.CameraModeChanged -= UpdateCamButtons;
             world.DrawingChanged -= OnDrawingChanged;
             world = null; selModule = null; plantDirty = true;
             UpdateModeUi();
@@ -802,7 +807,28 @@ namespace EquipFX
             cargoChip.tooltip = "물류센터가 다루는 화물 바꾸기";
             layoutTools.Add(cargoChip);
             layoutTools.Add(Gap(8));
-            var hint = HudStyle.MakeLabel("여백 끌기 화면 이동 · 클릭 선택 · 설비 끌어 옮기기 · Del 삭제 · F 맞춤 · 오른쪽 끌기 회전 · 휠 확대", 12, HudStyle.Muted);
+            // 카메라: 궤도 / 1인칭 / 장비 추적 / 화물 추적
+            camOrbitLBtn = HudStyle.MakeButton("궤도", () => world?.ExitCamera());
+            camOrbitLBtn.tooltip = "위에서 내려다보는 기본 카메라";
+            camFpBtn = HudStyle.MakeButton("1인칭", () => { SetMfd(false); world?.EnterFirstPerson(); });
+            camFpBtn.tooltip = "센터 안을 걸어다니며 보기 (WASD · Shift 달리기 · 끌어서 둘러보기 · Esc 나가기)";
+            camEqBtn = HudStyle.MakeButton("장비 추적", () =>
+            {
+                SetMfd(false);
+                if (world != null && !world.FollowEquipment()) Toast("따라갈 장비가 없습니다. 지게차 · 작업자나 설비의 로봇을 먼저 선택하세요.");
+            });
+            camEqBtn.tooltip = "선택한 지게차 · 작업자 · 로봇(설비 부품)을 따라갑니다. 선택이 없으면 첫 하역 수단";
+            camCargoBtn = HudStyle.MakeButton("화물 추적", () =>
+            {
+                SetMfd(false);
+                if (world != null && !world.FollowCargo()) Toast("따라갈 화물이 없습니다");
+            });
+            camCargoBtn.tooltip = "옮기는 중인 화물을 따라갑니다. 다시 누르면 다음 화물";
+            layoutTools.Add(Gap(8));
+            layoutTools.Add(camOrbitLBtn); layoutTools.Add(camFpBtn); layoutTools.Add(camEqBtn); layoutTools.Add(camCargoBtn);
+            layoutTools.Add(Gap(8));
+            layoutHint = HudStyle.MakeLabel(HintOrbit, 12, HudStyle.Muted);
+            var hint = layoutHint;
             hint.style.flexGrow = 1; hint.style.overflow = Overflow.Hidden; hint.style.textOverflow = TextOverflow.Ellipsis;
             layoutTools.Add(hint);
             layoutTools.Add(HudStyle.MakeButton("모두 지우기", () => world?.ClearAll()));
@@ -1299,6 +1325,7 @@ namespace EquipFX
             layoutTools.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
             plantBox.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
             if (!LayoutMode && (mfdOn || cadOn)) SetMfd(false);
+            if (!LayoutMode) world?.ExitCamera();
             UpdateMfdTabs();
             HudStyle.SetOn(modeLayoutBtn, LayoutMode);
             HudStyle.SetOn(modeAnimBtn, !LayoutMode && entry != null);
@@ -1427,8 +1454,24 @@ namespace EquipFX
             UpdateMfdTabs();
         }
 
+        void UpdateCamButtons()
+        {
+            if (camFpBtn == null || world == null) return;
+            var m = world.CameraMode;
+            HudStyle.SetOn(camOrbitLBtn, m == LayoutWorld.CamMode.Orbit);
+            HudStyle.SetOn(camFpBtn, m == LayoutWorld.CamMode.FirstPerson);
+            bool fol = m == LayoutWorld.CamMode.Follow;
+            bool cargoFol = fol && world.FollowName != null && world.FollowName.Contains("화물");
+            HudStyle.SetOn(camEqBtn, fol && !cargoFol); HudStyle.SetOn(camCargoBtn, cargoFol);
+            if (layoutHint != null)
+                layoutHint.text = m == LayoutWorld.CamMode.FirstPerson ? "1인칭 · WASD 걷기 · Shift 달리기 · 끌어서 둘러보기 · Q/E 돌기 · 클릭 선택 · Esc 나가기"
+                                : fol ? $"추적: {world.FollowName} · 오른쪽 끌기 회전 · 휠 거리 · Esc 나가기"
+                                : HintOrbit;
+        }
+
         void UpdateMfdTabs()
         {
+            UpdateCamButtons();
             if (dashPanel != null) dashPanel.style.display = mfdOn || cadOn ? DisplayStyle.None : DisplayStyle.Flex;
             if (tab3dBtn == null) return;
             HudStyle.SetOn(tab3dBtn, !mfdOn && !cadOn); HudStyle.SetOn(tabMfdBtn, mfdOn); HudStyle.SetOn(tabCadBtn, cadOn);
@@ -1761,6 +1804,9 @@ namespace EquipFX
                 siteBox.Add(SectionTitle("상태"));
                 var st = HudStyle.MakeLabel(mv.State, 13, HudStyle.Strong, true); st.name = "moverState";
                 siteBox.Add(st);
+                var fb = HudStyle.MakeButton("이 장비 따라가기", () => { SetMfd(false); world.Follow(mv.t, mv.t.name); });
+                HudStyle.Margin(fb, 8, 0, 0, 0);
+                siteBox.Add(fb);
                 var canDo = MoverInfo.Handles(mv.kind, world.Cargo);
                 if (!canDo)
                 {

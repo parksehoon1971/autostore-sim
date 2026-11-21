@@ -769,6 +769,27 @@ namespace EquipFX
             }
         }
 
+        // 추적할 화물: 옮기는 중인 화물이 있으면 그중에서, 없으면 트럭 · 구역 위 화물에서 차례로
+        public Transform NextCargo(ref int cursor, out string label)
+        {
+            var list = new List<(Transform t, string name)>();
+            foreach (var m in movers) if (m.load != null) list.Add((m.load, $"{MoverInfo.Name(m.kind)} {m.id} 이(가) 옮기는 화물"));
+            if (list.Count == 0)
+            {
+                foreach (var b in bays)
+                    if (b.truck != null)
+                        foreach (var u in b.truck.slot) if (u != null) list.Add((u, b.inbound ? "입고 트럭의 화물" : "출고 트럭의 화물"));
+                foreach (var z in zones)
+                    foreach (var sl in z.slots)
+                        if (sl.unit != null) list.Add((sl.unit, z.kind == 0 ? "입고 대기 화물" : z.kind == 1 ? "평치 화물" : "출고장 화물"));
+            }
+            label = null;
+            if (list.Count == 0) return null;
+            cursor = (cursor + 1) % list.Count;
+            label = list[cursor].name;
+            return list[cursor].t;
+        }
+
         public int TrucksWaiting { get { int n = 0; foreach (var b in bays) if (b.state == 2 || b.state == 3) n++; return n; } }
     }
 }

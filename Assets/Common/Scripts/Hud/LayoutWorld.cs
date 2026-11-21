@@ -392,7 +392,8 @@ namespace EquipFX
             if (inp.lHeld && pressEmpty)
             {
                 if (!panning && (inp.mouse - pressMouse).magnitude > 4f) panning = true;
-                if (panning && Ground(ray, panH, out var ph))
+                if (panning && CameraMode == CamMode.FirstPerson) FpLook(inp.mouseDelta);   // 1인칭: 끌어서 둘러보기
+                else if (panning && CameraMode == CamMode.Orbit && Ground(ray, panH, out var ph))
                 {
                     var dlt = panAnchor - ph; dlt.y = 0;
                     focus += dlt;
@@ -489,6 +490,7 @@ namespace EquipFX
         public void BeginSiteDrawing()
         {
             DrawingSite = true; siteDragging = false; dragEntry = null;
+            ExitCamera();
             Select(null);
             ghost.Hide();
             DrawingChanged?.Invoke();
@@ -743,9 +745,133 @@ namespace EquipFX
             return best;
         }
 
+        // ---------------------------------------------------------------- 카메라 모드: 궤도 / 1인칭 / 추적
+        public enum CamMode { Orbit, FirstPerson, Follow }
+        public CamMode CameraMode { get; private set; }
+        public string FollowName { get; private set; }
+        public event Action CameraModeChanged;
+        const float EyeH = 1.65f;
+        Vector3 fpPos; float fpYaw, fpPitch;
+        Transform followT; int cargoCursor = -1;
+
+        float GroundH(Vector3 p) => InsideBuilding(p) ? FloorY : 0f;
+
+        // 센터 안 첫 문 안쪽 통로에서 건물 안쪽을 보며 시작 (센터가 없으면 지금 보는 곳)
+        public void EnterFirstPerson()
+        {
+            var p = new Vector3(focus.x, 0, focus.z); float y0 = yaw;
+            if (Site.drawn && Site.doors.Count > 0)
+            {
+                var d = Site.doors[0]; var n = -Plan.Outward(d.side);
+                var q = Plan.DoorInside(Site, d) + n * (Plan.StageDepth + 2f);
+                p = new Vector3(q.x, 0, q.y);
+                y0 = Mathf.Atan2(n.x, n.y) * Mathf.Rad2Deg;
+            }
+            fpPos = new Vector3(p.x, GroundH(p) + EyeH, p.z); fpYaw = y0; fpPitch = 0f;
+            followT = null; FollowName = null;
+            CameraMode = CamMode.FirstPerson;
+            cam.fieldOfView = 65f;
+            CameraModeChanged?.Invoke();
+        }
+
+        public void Follow(Transform t, string name)
+        {
+            if (t == null) return;
+            if (CameraMode != CamMode.Follow) { dist = 14f; pitch = 35f; }
+            if (CameraMode == CamMode.FirstPerson) yaw = fpYaw;
+            followT = t; FollowName = name;
+            CameraMode = CamMode.Follow;
+            cam.fieldOfView = 40f;
+            CameraModeChanged?.Invoke();
+        }
+
+        // 선택한 하역 수단 · 설비 부품(로봇 · 셔틀 등)을 따라감. 아무것도 없으면 첫 하역 수단
+        public bool FollowEquipment()
+        {
+            if (SelectedMover != null) { Follow(SelectedMover.t, SelectedMover.t.name); return true; }
+            if (SelectedPart != null && SelectedPart.t != null) { Follow(SelectedPart.t, $"{SelectedPart.module.entry.name} {SelectedPart.Label}"); return true; }
+            if (Traffic.movers.Count > 0) { var m = Traffic.movers[0]; Follow(m.t, m.t.name); return true; }
+            return false;
+        }
+
+        // 화물을 차례로 따라감 (옮기는 중인 화물부터)
+        public bool FollowCargo()
+        {
+            var t = Traffic.NextCargo(ref cargoCursor, out var label);
+            if (t == null) return false;
+            Follow(t, label);
+            return true;
+        }
+
+        public void ExitCamera()
+        {
+            if (CameraMode == CamMode.Orbit) return;
+            if (CameraMode == CamMode.FirstPerson) { focus = new Vector3(fpPos.x, 0, fpPos.z); yaw = fpYaw; pitch = 50f; dist = 40f; }
+            focus.y = 0;
+            CameraMode = CamMode.Orbit; followT = null; FollowName = null;
+            cam.fieldOfView = 40f;
+            CameraModeChanged?.Invoke();
+        }
+
+        void FpLook(Vector2 delta)
+        {
+            fpYaw += delta.x * 0.2f;
+            fpPitch = Mathf.Clamp(fpPitch - delta.y * 0.2f, -70f, 70f);
+        }
+
+        bool FpBlocked(Vector3 p)
+        {
+            foreach (var m in modules)
+            {
+                if (m == null) continue;
+                var mn = m.Min; var sz = m.Size;
+                if (p.x > mn.x - 0.3f && p.x < mn.x + sz.x + 0.3f && p.z > mn.y - 0.3f && p.z < mn.y + sz.y + 0.3f) return true;
+            }
+            return false;
+        }
+
+        // 1인칭: WASD 걷기 (Shift 달리기), 오른쪽 끌기 · 여백 끌기로 둘러보기, Q/E 돌기, Esc 나가기
+        void FirstPersonControls(LayoutInput i, float dt)
+        {
+            if (i.esc) { ExitCamera(); return; }
+            if (i.rHeld) FpLook(i.mouseDelta);
+            if (!HudInput.Typing)
+            {
+                if (i.q) fpYaw -= 90f * dt; if (i.e) fpYaw += 90f * dt;
+                var f = Quaternion.Euler(0, fpYaw, 0) * Vector3.forward; var r = Quaternion.Euler(0, fpYaw, 0) * Vector3.right;
+                var mv = Vector3.zero;
+                if (i.w) mv += f; if (i.s) mv -= f; if (i.d) mv += r; if (i.a) mv -= r;
+                if (mv.sqrMagnitude > 0.01f)
+                {
+                    var np = fpPos + mv.normalized * (i.shift ? 9f : 4f) * dt;
+                    np.x = Mathf.Clamp(np.x, FloorX0, FloorX0 + floorW); np.z = Mathf.Clamp(np.z, FloorZ0, FloorZ0 + floorD);
+                    if (!FpBlocked(np)) fpPos = np;
+                    else if (!FpBlocked(new Vector3(np.x, fpPos.y, fpPos.z))) fpPos.x = np.x;   // 벽 따라 미끄러지기
+                    else if (!FpBlocked(new Vector3(fpPos.x, fpPos.y, np.z))) fpPos.z = np.z;
+                }
+            }
+            fpPos.y = Mathf.Lerp(fpPos.y, GroundH(fpPos) + EyeH, 1f - Mathf.Exp(-10f * dt));   // 바닥 높이가 바뀌면 부드럽게
+            cam.transform.SetPositionAndRotation(fpPos, Quaternion.Euler(fpPitch, fpYaw, 0));
+        }
+
+        // 추적: 대상을 가운데 두고 따라감. 오른쪽 끌기 회전, 휠 거리, Esc 나가기
+        void FollowControls(LayoutInput i, bool overUi, float dt)
+        {
+            if (followT == null) { ExitCamera(); Notice?.Invoke("추적하던 대상이 사라져 추적을 끝냈습니다"); return; }
+            if (i.esc) { ExitCamera(); return; }
+            if (i.rHeld) { yaw += i.mouseDelta.x * 0.25f; pitch = Mathf.Clamp(pitch - i.mouseDelta.y * 0.2f, 5f, 88f); }
+            if (!HudInput.Typing) { if (i.q) yaw += 70f * dt; if (i.e) yaw -= 70f * dt; }
+            if (!overUi && Mathf.Abs(i.scroll) > 0.001f) dist = Mathf.Clamp(dist * Mathf.Pow(0.85f, i.scroll), 3f, 80f);
+            var tp = followT.position + Vector3.up * 1.2f;
+            focus = Vector3.Lerp(focus, tp, 1f - Mathf.Exp(-8f * dt));
+            UpdateCamera(false);
+        }
+
         void CameraControls(LayoutInput i, bool overUi)
         {
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+            if (CameraMode == CamMode.FirstPerson) { FirstPersonControls(i, dt); return; }
+            if (CameraMode == CamMode.Follow) { FollowControls(i, overUi, dt); return; }
             if (!HudInput.Typing)
             {
                 var fwd = Quaternion.Euler(0, yaw, 0) * Vector3.forward; var right = Quaternion.Euler(0, yaw, 0) * Vector3.right;
