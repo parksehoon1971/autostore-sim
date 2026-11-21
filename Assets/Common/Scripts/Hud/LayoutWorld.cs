@@ -36,6 +36,8 @@ namespace EquipFX
         public List<MoverSave> movers = new List<MoverSave>();   // 하역 수단
         public bool moversGiven;                     // 기본 하역 수단(지게차 1 · 작업자 1)을 이미 줌
         public bool unlimited;                       // 무제한 모드 (돈 · 마감 없음)
+        public int balance;                          // 자금 모드 잔고 (만원)
+        public bool fundsInit;
     }
 
     // 배치된 설비 하나 (모듈 루트)
@@ -140,6 +142,41 @@ namespace EquipFX
         // 자금 모드: 화주 주문 보상 · 패널티로 잔고가 움직이고 마감이 있음. 무제한 모드: 돈과 마감 없이 자유롭게 설계
         public bool Unlimited { get; private set; }
 
+        // ---------------------------------------------------------------- 자금 (자금 모드에서만)
+        public const int StartCapital = 300000;     // 시작 자본 30억원 (만원)
+        public const float Resale = 0.7f;           // 지우면 구매비의 70% 를 돌려받음
+
+        public bool CanAfford(int cost) => Unlimited || Traffic.balance >= cost;
+
+        bool Pay(int cost, string what)
+        {
+            if (Unlimited || cost <= 0) return true;
+            if (Traffic.balance < cost)
+            {
+                Notice?.Invoke($"잔고가 부족합니다. {what}: {EquipCatalog.Money(cost)} 필요, 잔고 {EquipCatalog.Money(Traffic.balance)}");
+                return false;
+            }
+            Traffic.balance -= cost;
+            Notice?.Invoke($"{what} 구매  −{EquipCatalog.Money(cost)}  (잔고 {EquipCatalog.Money(Traffic.balance)})");
+            return true;
+        }
+
+        void Refund(int cost, string what)
+        {
+            if (Unlimited || cost <= 0) return;
+            int r = Mathf.RoundToInt(cost * Resale);
+            Traffic.balance += r;
+            Notice?.Invoke($"{what} 매각  +{EquipCatalog.Money(r)}");
+        }
+
+        // 자금을 시작 자본으로 되돌림 (설비·수단은 그대로)
+        public void ResetFunds()
+        {
+            Traffic.balance = StartCapital;
+            Save();
+            Notice?.Invoke($"잔고를 시작 자본 {EquipCatalog.Money(StartCapital)}으로 되돌렸습니다");
+        }
+
         public void SetUnlimited(bool on)
         {
             if (Unlimited == on) return;
@@ -196,8 +233,8 @@ namespace EquipFX
             selFrame = new FootprintFrame("SelectionFrame", transform);
             partBox = new OutlineBox("PartOutline", transform);
             plan = new FloorPlan(transform, floorMat.GetTexture("_BaseMap"));
-            Traffic = new Traffic(transform);
-            Traffic.Notice += msg => Notice?.Invoke(msg);
+            Traffic = new Traffic(transform) { balance = StartCapital };
+            Traffic.Notice += msg => { Notice?.Invoke(msg); Save(); };
             ghost.Hide(); selFrame.Hide(); partBox.Hide();
         }
 
@@ -317,7 +354,7 @@ namespace EquipFX
                 else if (inp.lUp)
                 {
                     var e = dragEntry; dragEntry = null; ghost.Hide();
-                    if (ok) Place(e, min, null);
+                    if (ok) { if (Pay(EquipCatalog.PriceOf(e), e.name)) Place(e, min, null); }
                     else if (overUi && (inp.mouse - dragStartMouse).magnitude < 6f) PlaceNearView(e);   // 누르기만 함 → 화면 가운데 근처 빈자리
                 }
                 return;
@@ -634,7 +671,7 @@ namespace EquipFX
             return true;
         }
 
-        public Mover AddMover(int kind, Vector2 p) => AddMover(kind, p, true);
+        public Mover AddMover(int kind, Vector2 p) => Pay(MoverInfo.Price(kind), MoverInfo.Name(kind)) ? AddMover(kind, p, true) : null;
 
         Mover AddMover(int kind, Vector2 p, bool select)
         {
@@ -658,7 +695,7 @@ namespace EquipFX
         }
 
         // 눌러서 추가: 해당 화물을 다루는 문 안쪽 대기 구역 옆 빈자리
-        void AddMoverNearDock(int kind) => AddMoverNearDock(kind, true);
+        void AddMoverNearDock(int kind) { if (Pay(MoverInfo.Price(kind), MoverInfo.Name(kind))) AddMoverNearDock(kind, true); }
 
         void AddMoverNearDock(int kind, bool select)
         {
@@ -682,6 +719,7 @@ namespace EquipFX
         {
             if (m == null) return;
             if (SelectedMover == m) Select(null);
+            Refund(MoverInfo.Price(m.kind), MoverInfo.Name(m.kind));
             Traffic.RemoveMover(m);
             Save();
         }
@@ -761,6 +799,11 @@ namespace EquipFX
         public bool BeginDrag(EquipEntry e)
         {
             if (!CanHandle(e)) return false;
+            if (!CanAfford(EquipCatalog.PriceOf(e)))
+            {
+                Notice?.Invoke($"잔고가 부족합니다. {e.name}: {EquipCatalog.Money(EquipCatalog.PriceOf(e))} 필요, 잔고 {EquipCatalog.Money(Traffic.balance)}");
+                return true;   // 끌기는 시작하지 않음 (안내만)
+            }
             dragEntry = e; dragStartMouse = LayoutInput.Read().mouse;
             return true;
         }
@@ -798,7 +841,7 @@ namespace EquipFX
         {
             var size = SizeOf(e);
             var c = new Vector2(focus.x - size.x / 2, focus.z - size.y / 2);
-            if (FindFree(c, size, null, out var min)) Place(e, min, null);
+            if (FindFree(c, size, null, out var min) && Pay(EquipCatalog.PriceOf(e), e.name)) Place(e, min, null);
         }
 
         // start 근처에서 나선형으로 빈자리 찾기 (건물 안, 다른 설비·도크와 겹치지 않는 곳)
@@ -888,6 +931,7 @@ namespace EquipFX
         public void Remove(PlacedModule m)
         {
             if (m == null) return;
+            Refund(EquipCatalog.PriceOf(m.entry), m.entry.name);
             modules.Remove(m);
             if (Selected == m) Select(null);
             Destroy(m.gameObject);
@@ -897,7 +941,9 @@ namespace EquipFX
 
         public void ClearAll()
         {
-            foreach (var m in modules) if (m != null) Destroy(m.gameObject);
+            int back = 0;
+            foreach (var m in modules) if (m != null) { back += EquipCatalog.PriceOf(m.entry); Destroy(m.gameObject); }
+            if (back > 0) Refund(back, "설비 전부");
             modules.Clear(); Select(null);
             Save(); LayoutChanged?.Invoke();
         }
@@ -1051,6 +1097,7 @@ namespace EquipFX
             foreach (var mv in Traffic.movers) s.movers.Add(new MoverSave { kind = mv.kind, x = mv.t.position.x, z = mv.t.position.z });
             s.moversGiven = moversGiven;
             s.unlimited = Unlimited;
+            s.balance = Traffic.balance; s.fundsInit = true;
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(s));
             PlayerPrefs.Save();
         }
@@ -1070,6 +1117,7 @@ namespace EquipFX
             if (s.movers != null) foreach (var mv in s.movers) Traffic.AddMover(mv.kind, new Vector3(mv.x, FloorY, mv.z));
             moversGiven = s.moversGiven || (s.movers != null && s.movers.Count > 0);
             Unlimited = s.unlimited;
+            Traffic.balance = s.fundsInit ? s.balance : StartCapital;
             foreach (var it in s.items)
             {
                 var e = EquipCatalog.All.Find(x => x.id == it.id);

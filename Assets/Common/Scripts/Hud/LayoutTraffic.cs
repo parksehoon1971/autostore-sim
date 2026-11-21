@@ -22,6 +22,7 @@ namespace EquipFX
         public static string Desc(int k) => k == Forklift ? "파렛트·드럼·토트·카톤 모두 하역. 2.8 m/s" : "토트·카톤만 손으로 하역 (파렛트 불가). 1.4 m/s";
         public static bool Handles(int k, CargoKind c) => k == Forklift || c == CargoKind.Tote || c == CargoKind.Carton;
         public static float Speed(int k) => k == Forklift ? 2.8f : 1.4f;
+        public static int Price(int k) => k == Forklift ? 3500 : 500;     // 자금 모드: 지게차 구매 / 작업자 채용 (만원)
     }
 
     // ------------------------------------------------------------------ 윙바디 트럭

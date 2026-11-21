@@ -898,7 +898,7 @@ namespace EquipFX
 
         VisualElement MoverCard(int kind)
         {
-            var c = ToolCard(MoverInfo.Name(kind), MoverInfo.Desc(kind) + " · 끌어서 센터 안에 놓기", null);
+            var c = ToolCard(MoverInfo.Name(kind), MoverInfo.Desc(kind) + $" · {EquipCatalog.Money(MoverInfo.Price(kind))} · 끌어서 센터 안에 놓기", null);
             c.RegisterCallback<PointerDownEvent>(ev =>
             {
                 if (ev.button != 0) return;
@@ -934,7 +934,7 @@ namespace EquipFX
             var txt = new VisualElement { pickingMode = PickingMode.Ignore }; txt.style.flexGrow = 1; txt.style.flexShrink = 1;
             var n = HudStyle.MakeLabel(e.name, 13, HudStyle.Strong, true);
             var k = HudStyle.MakeLabel(e.korean, 11, HudStyle.Muted); k.style.whiteSpace = WhiteSpace.Normal;
-            var cg = HudStyle.MakeLabel("화물: " + CargoInfo.Names(e.cargo), 10, HudStyle.Muted); cg.name = "cargo"; HudStyle.Margin(cg, 2, 0, 0, 0);
+            var cg = HudStyle.MakeLabel("화물: " + CargoInfo.Names(e.cargo) + " · " + EquipCatalog.Money(EquipCatalog.PriceOf(e)), 10, HudStyle.Muted); cg.name = "cargo"; HudStyle.Margin(cg, 2, 0, 0, 0);
             txt.Add(n); txt.Add(k); txt.Add(cg);
             c.Add(txt);
             // 애니메이션으로 보기
@@ -1032,7 +1032,7 @@ namespace EquipFX
             plantDirty = false;
             plantTiles.Clear(); plantList.Clear(); plantRows.Clear(); plantUnitLbls.Clear();
             if (!LayoutMode) return;
-            var (tb, vb) = Tile("잔고 (보상 − 패널티)", "만원"); plantTiles.Add(tb); balanceLbl = vb;
+            var (tb, vb) = Tile("잔고", ""); plantTiles.Add(tb); balanceLbl = vb;
             var (ti, vi) = Tile("입고 처리", "개"); plantTiles.Add(ti); inDoneLbl = vi;
             var (to, vo) = Tile("출고 처리", "개"); plantTiles.Add(to); outDoneLbl = vo;
             var (tt, vt) = Tile("대기 트럭", "대"); plantTiles.Add(tt); trucksLbl = vt;
@@ -1516,7 +1516,7 @@ namespace EquipFX
                 for (int k = 0; k < world.modules.Count; k++) if (world.modules[k] != null) mfd.SetSub("mod" + k, ModuleSub(world.modules[k]));
             }
             if (mfdSummary != null)
-                mfdSummary.text = (world.Unlimited ? "무제한 모드" : $"잔고 {tr.balance.ToString("N0", CultureInfo.InvariantCulture)}만원") + $" · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
+                mfdSummary.text = (world.Unlimited ? "무제한 모드" : $"잔고 {EquipCatalog.Money(tr.balance)}") + $" · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
         }
 
         void OnMfdClick(string id)
@@ -1553,7 +1553,7 @@ namespace EquipFX
             var tr = world.Traffic;
             if (balanceLbl != null && tr != null)
             {
-                balanceLbl.text = world.Unlimited ? "무제한" : tr.balance.ToString("N0", CultureInfo.InvariantCulture);
+                balanceLbl.text = world.Unlimited ? "무제한" : EquipCatalog.Money(tr.balance);
                 balanceLbl.style.color = tr.balance < 0 ? HudStyle.Bad : tr.balance > 0 ? HudStyle.Ok : HudStyle.Strong;
                 inDoneLbl.text = tr.inDone.ToString(); outDoneLbl.text = tr.outDone.ToString();
                 trucksLbl.text = tr.TrucksWaiting.ToString();
@@ -1892,8 +1892,8 @@ namespace EquipFX
             if (modeFundsBtn == null) return;
             HudStyle.SetOn(modeFundsBtn, !modalUnlimited); HudStyle.SetOn(modeFreeBtn, modalUnlimited);
             modeDescLbl.text = modalUnlimited
-                ? "돈과 마감 없이 자유롭게 설계합니다. 트럭과 상하차는 그대로 돌아갑니다."
-                : "주문을 제때 처리하면 보상, 마감을 넘기면 패널티를 받아 잔고가 움직입니다.";
+                ? "돈과 마감 없이 자유롭게 설계합니다. 설비도 무료입니다. 트럭과 상하차는 그대로 돌아갑니다."
+                : $"시작 자본 {EquipCatalog.Money(LayoutWorld.StartCapital)}으로 설비와 하역 수단을 사고(지우면 70% 환불), 주문 보상 · 마감 패널티로 잔고가 움직입니다.";
         }
 
         void RebuildCargoTiles()
