@@ -34,6 +34,10 @@ namespace EquipFX
         public int cargo = (int)CargoKind.Pallet;   // 이 물류센터가 다루는 화물
         public SiteDef site;                         // 물류센터 건물 · 출입문
         public List<MoverSave> movers = new List<MoverSave>();   // 하역 수단
+        public bool moversGiven;                     // 기본 하역 수단(지게차 1 · 작업자 1)을 이미 줌
+        public bool unlimited;                       // 무제한 모드 (돈 · 마감 없음)
+        public int balance;                          // 자금 모드 잔고 (만원)
+        public bool fundsInit;
     }
 
     // 배치된 설비 하나 (모듈 루트)
@@ -135,6 +139,51 @@ namespace EquipFX
         public PartRef SelectedPart { get; private set; }
         public event Action SelectionChanged, LayoutChanged, CargoChanged;
         public CargoKind Cargo { get; private set; } = CargoKind.Pallet;
+        // 자금 모드: 화주 주문 보상 · 패널티로 잔고가 움직이고 마감이 있음. 무제한 모드: 돈과 마감 없이 자유롭게 설계
+        public bool Unlimited { get; private set; }
+
+        // ---------------------------------------------------------------- 자금 (자금 모드에서만)
+        public const int StartCapital = 300000;     // 시작 자본 30억원 (만원)
+        public const float Resale = 0.7f;           // 지우면 구매비의 70% 를 돌려받음
+
+        public bool CanAfford(int cost) => Unlimited || Traffic.balance >= cost;
+
+        bool Pay(int cost, string what)
+        {
+            if (Unlimited || cost <= 0) return true;
+            if (Traffic.balance < cost)
+            {
+                Notice?.Invoke($"잔고가 부족합니다. {what}: {EquipCatalog.Money(cost)} 필요, 잔고 {EquipCatalog.Money(Traffic.balance)}");
+                return false;
+            }
+            Traffic.balance -= cost;
+            Notice?.Invoke($"{what} 구매  −{EquipCatalog.Money(cost)}  (잔고 {EquipCatalog.Money(Traffic.balance)})");
+            return true;
+        }
+
+        void Refund(int cost, string what)
+        {
+            if (Unlimited || cost <= 0) return;
+            int r = Mathf.RoundToInt(cost * Resale);
+            Traffic.balance += r;
+            Notice?.Invoke($"{what} 매각  +{EquipCatalog.Money(r)}");
+        }
+
+        // 자금을 시작 자본으로 되돌림 (설비·수단은 그대로)
+        public void ResetFunds()
+        {
+            Traffic.balance = StartCapital;
+            Save();
+            Notice?.Invoke($"잔고를 시작 자본 {EquipCatalog.Money(StartCapital)}으로 되돌렸습니다");
+        }
+
+        public void SetUnlimited(bool on)
+        {
+            if (Unlimited == on) return;
+            Unlimited = on;
+            Save();
+            CargoChanged?.Invoke();
+        }
         public bool CanHandle(EquipEntry e) => e != null && e.Handles(Cargo);
         // 물류센터 건물
         public SiteDef Site { get; private set; } = NewSite();
@@ -150,6 +199,8 @@ namespace EquipFX
         int dragMover = -1; Mover pressMover; bool moverMoved;
         public bool DraggingMover => dragMover >= 0;
         Vector3 siteStart; bool siteDragging; int pressDoor = -1; bool doorMoved;
+        // 빈 곳(땅 · 건물 바닥)을 눌러 끌면 화면 이동
+        bool pressEmpty, pressOnBuilding, panning; Vector3 panAnchor; float panH;
         public bool Busy => buildQueue.Count > 0 || building;
         public EquipEntry Dragging => dragEntry;
 
@@ -182,8 +233,8 @@ namespace EquipFX
             selFrame = new FootprintFrame("SelectionFrame", transform);
             partBox = new OutlineBox("PartOutline", transform);
             plan = new FloorPlan(transform, floorMat.GetTexture("_BaseMap"));
-            Traffic = new Traffic(transform);
-            Traffic.Notice += msg => Notice?.Invoke(msg);
+            Traffic = new Traffic(transform) { balance = StartCapital };
+            Traffic.Notice += msg => { Notice?.Invoke(msg); Save(); };
             ghost.Hide(); selFrame.Hide(); partBox.Hide();
         }
 
@@ -216,7 +267,7 @@ namespace EquipFX
             floor.transform.position = new Vector3(FloorX0 + floorW / 2, -0.05f, FloorZ0 + floorD / 2);
             floor.GetComponent<MeshRenderer>().sharedMaterial = floorMat;
             Destroy(floor.GetComponent<Collider>());
-            focus = new Vector3(70f, 0, 40f); dist = 150f; pitch = 55f; yaw = 20f;
+            focus = new Vector3(45f, 0, 40f); dist = 160f; pitch = 55f; yaw = 20f;
 
             // 조명
             var sunGo = new GameObject("Sun"); sunGo.transform.SetParent(transform, false);
@@ -268,6 +319,8 @@ namespace EquipFX
 
             // 물류센터 영역 그리기 (그리는 동안 트럭은 멈춤)
             if (DrawingSite) { SiteDrawing(inp, ray, overUi); EndFrame(); return; }
+            if (!moversGiven && Site.drawn) GiveDefaultMovers();
+            Traffic.unlimited = Unlimited;
             Traffic.Tick(Time.deltaTime, Site, Cargo);
 
             // 라이브러리에서 하역 수단을 끌어 오는 중
@@ -301,7 +354,7 @@ namespace EquipFX
                 else if (inp.lUp)
                 {
                     var e = dragEntry; dragEntry = null; ghost.Hide();
-                    if (ok) Place(e, min, null);
+                    if (ok) { if (Pay(EquipCatalog.PriceOf(e), e.name)) Place(e, min, null); }
                     else if (overUi && (inp.mouse - dragStartMouse).magnitude < 6f) PlaceNearView(e);   // 누르기만 함 → 화면 가운데 근처 빈자리
                 }
                 return;
@@ -315,6 +368,7 @@ namespace EquipFX
                 if (part != null) pressModule = part.module;
                 pressMouse = inp.mouse;
                 pressDoor = -1; doorMoved = false; pressMover = null; moverMoved = false;
+                pressEmpty = false; panning = false;
                 var mv = part == null ? PickMover(ray) : null;
                 if (mv != null) { pressModule = null; pressMover = mv; SelectMover(mv); }
                 else if (pressModule == null)
@@ -322,11 +376,35 @@ namespace EquipFX
                     // 설비가 아니면: 출입문 → 건물 바닥 → 빈 땅
                     pressDoor = PickDoor(ray);
                     if (pressDoor >= 0) SelectDoor(pressDoor);
-                    else if (onGround && InsideBuilding(gp)) SelectBuilding();
-                    else Select(null);
+                    else
+                    {
+                        // 여백: 끌면 화면 이동, 끌지 않고 떼면 건물 선택(건물 바닥) 또는 선택 해제
+                        pressOnBuilding = onGround && InsideBuilding(gp);
+                        panH = pressOnBuilding ? FloorY : 0f;
+                        pressEmpty = Ground(ray, panH, out panAnchor);
+                        if (!pressOnBuilding) Select(null);
+                    }
                 }
                 else if (pressModule != Selected || part != SelectedPart || BuildingSelected || SelectedDoor >= 0) Select(pressModule, part);
                 if (pressModule != null && onGround) { moveStartPos = pressModule.transform.position; grabOffset = pressModule.transform.position - gp; }
+            }
+            // 여백 끌기: 누른 땅 점이 마우스를 따라오도록 화면 이동
+            if (inp.lHeld && pressEmpty)
+            {
+                if (!panning && (inp.mouse - pressMouse).magnitude > 4f) panning = true;
+                if (panning && CameraMode == CamMode.FirstPerson) FpLook(inp.mouseDelta);   // 1인칭: 끌어서 둘러보기
+                else if (panning && CameraMode == CamMode.Orbit && Ground(ray, panH, out var ph))
+                {
+                    var dlt = panAnchor - ph; dlt.y = 0;
+                    focus += dlt;
+                    focus.x = Mathf.Clamp(focus.x, FloorX0, FloorX0 + floorW); focus.z = Mathf.Clamp(focus.z, FloorZ0, FloorZ0 + floorD);
+                    UpdateCamera(false);
+                }
+            }
+            if (inp.lUp && pressEmpty)
+            {
+                if (!panning && pressOnBuilding) SelectBuilding();
+                pressEmpty = false; panning = false;
             }
             // 하역 수단 끌어서 옮기기
             if (inp.lHeld && pressMover != null && onGround && (moverMoved || (inp.mouse - pressMouse).magnitude > 6f))
@@ -412,6 +490,7 @@ namespace EquipFX
         public void BeginSiteDrawing()
         {
             DrawingSite = true; siteDragging = false; dragEntry = null;
+            ExitCamera();
             Select(null);
             ghost.Hide();
             DrawingChanged?.Invoke();
@@ -516,7 +595,7 @@ namespace EquipFX
         {
             var s = Site.Clone();
             int side = -1; foreach (var d in s.doors) if (d.kind == kind) { side = d.side; break; }
-            if (side < 0) side = Plan.FacingSide(s, kind == 0 ? Plan.InPoint : Plan.OutPoint);
+            if (side < 0) side = Plan.DockSide(s);
             // 같은 벽에서 다른 문과 가장 멀리 떨어진 자리
             float len = Plan.WallLen(s, side), best = len / 2, bestGap = -1;
             for (float p = Plan.DoorW; p < len - Plan.DoorW; p += 1f)
@@ -584,6 +663,7 @@ namespace EquipFX
         {
             if (!InsideBuilding(new Vector3(p.x, 0, p.y))) return false;
             if (p.x < Site.x + 1.5f || p.y < Site.z + 1.5f || p.x > Site.x + Site.w - 1.5f || p.y > Site.z + Site.d - 1.5f) return false;
+            if (Plan.HitsStage(Site, p - new Vector2(0.8f, 0.8f), new Vector2(1.6f, 1.6f), 0f)) return false;   // 대기 구역 · 평치 위는 안 됨
             foreach (var m in modules)
             {
                 if (m == null) continue;
@@ -593,16 +673,33 @@ namespace EquipFX
             return true;
         }
 
-        public Mover AddMover(int kind, Vector2 p)
+        public Mover AddMover(int kind, Vector2 p) => Pay(MoverInfo.Price(kind), MoverInfo.Name(kind)) ? AddMover(kind, p, true) : null;
+
+        Mover AddMover(int kind, Vector2 p, bool select)
         {
             var mv = Traffic.AddMover(kind, new Vector3(p.x, FloorY, p.y));
-            SelectMover(mv);
+            if (select) SelectMover(mv);
             Save();
             return mv;
         }
 
+        // 센터를 처음 정하면 지게차 1대와 작업자 1명을 기본으로 줌
+        bool moversGiven;
+        void GiveDefaultMovers()
+        {
+            moversGiven = true;
+            if (Traffic.movers.Count == 0)
+            {
+                AddMoverNearDock(MoverInfo.Forklift, false);
+                AddMoverNearDock(MoverInfo.Worker, false);
+            }
+            Save();
+        }
+
         // 눌러서 추가: 해당 화물을 다루는 문 안쪽 대기 구역 옆 빈자리
-        void AddMoverNearDock(int kind)
+        void AddMoverNearDock(int kind) { if (Pay(MoverInfo.Price(kind), MoverInfo.Name(kind))) AddMoverNearDock(kind, true); }
+
+        void AddMoverNearDock(int kind, bool select)
         {
             foreach (var d in Site.doors)
             {
@@ -613,17 +710,18 @@ namespace EquipFX
                     var q = c + new Vector2((k % 4 - 1.5f) * 2f, (k / 4) * 2.5f) * (d.side < 2 ? 1 : -1);
                     bool taken = false;
                     foreach (var o in Traffic.movers) if ((new Vector2(o.t.position.x, o.t.position.z) - q).sqrMagnitude < 2.5f) taken = true;
-                    if (!taken && MoverSpotOk(q)) { AddMover(kind, q); return; }
+                    if (!taken && MoverSpotOk(q)) { AddMover(kind, q, select); return; }
                 }
             }
             var cc = new Vector2(Site.x + Site.w / 2, Site.z + Site.d / 2);
-            if (MoverSpotOk(cc)) AddMover(kind, cc);
+            if (MoverSpotOk(cc)) AddMover(kind, cc, select);
         }
 
         public void RemoveMover(Mover m)
         {
             if (m == null) return;
             if (SelectedMover == m) Select(null);
+            Refund(MoverInfo.Price(m.kind), MoverInfo.Name(m.kind));
             Traffic.RemoveMover(m);
             Save();
         }
@@ -647,9 +745,133 @@ namespace EquipFX
             return best;
         }
 
+        // ---------------------------------------------------------------- 카메라 모드: 궤도 / 1인칭 / 추적
+        public enum CamMode { Orbit, FirstPerson, Follow }
+        public CamMode CameraMode { get; private set; }
+        public string FollowName { get; private set; }
+        public event Action CameraModeChanged;
+        const float EyeH = 1.65f;
+        Vector3 fpPos; float fpYaw, fpPitch;
+        Transform followT; int cargoCursor = -1;
+
+        float GroundH(Vector3 p) => InsideBuilding(p) ? FloorY : 0f;
+
+        // 센터 안 첫 문 안쪽 통로에서 건물 안쪽을 보며 시작 (센터가 없으면 지금 보는 곳)
+        public void EnterFirstPerson()
+        {
+            var p = new Vector3(focus.x, 0, focus.z); float y0 = yaw;
+            if (Site.drawn && Site.doors.Count > 0)
+            {
+                var d = Site.doors[0]; var n = -Plan.Outward(d.side);
+                var q = Plan.DoorInside(Site, d) + n * (Plan.StageDepth + 2f);
+                p = new Vector3(q.x, 0, q.y);
+                y0 = Mathf.Atan2(n.x, n.y) * Mathf.Rad2Deg;
+            }
+            fpPos = new Vector3(p.x, GroundH(p) + EyeH, p.z); fpYaw = y0; fpPitch = 0f;
+            followT = null; FollowName = null;
+            CameraMode = CamMode.FirstPerson;
+            cam.fieldOfView = 65f;
+            CameraModeChanged?.Invoke();
+        }
+
+        public void Follow(Transform t, string name)
+        {
+            if (t == null) return;
+            if (CameraMode != CamMode.Follow) { dist = 14f; pitch = 35f; }
+            if (CameraMode == CamMode.FirstPerson) yaw = fpYaw;
+            followT = t; FollowName = name;
+            CameraMode = CamMode.Follow;
+            cam.fieldOfView = 40f;
+            CameraModeChanged?.Invoke();
+        }
+
+        // 선택한 하역 수단 · 설비 부품(로봇 · 셔틀 등)을 따라감. 아무것도 없으면 첫 하역 수단
+        public bool FollowEquipment()
+        {
+            if (SelectedMover != null) { Follow(SelectedMover.t, SelectedMover.t.name); return true; }
+            if (SelectedPart != null && SelectedPart.t != null) { Follow(SelectedPart.t, $"{SelectedPart.module.entry.name} {SelectedPart.Label}"); return true; }
+            if (Traffic.movers.Count > 0) { var m = Traffic.movers[0]; Follow(m.t, m.t.name); return true; }
+            return false;
+        }
+
+        // 화물을 차례로 따라감 (옮기는 중인 화물부터)
+        public bool FollowCargo()
+        {
+            var t = Traffic.NextCargo(ref cargoCursor, out var label);
+            if (t == null) return false;
+            Follow(t, label);
+            return true;
+        }
+
+        public void ExitCamera()
+        {
+            if (CameraMode == CamMode.Orbit) return;
+            if (CameraMode == CamMode.FirstPerson) { focus = new Vector3(fpPos.x, 0, fpPos.z); yaw = fpYaw; pitch = 50f; dist = 40f; }
+            focus.y = 0;
+            CameraMode = CamMode.Orbit; followT = null; FollowName = null;
+            cam.fieldOfView = 40f;
+            CameraModeChanged?.Invoke();
+        }
+
+        void FpLook(Vector2 delta)
+        {
+            fpYaw += delta.x * 0.2f;
+            fpPitch = Mathf.Clamp(fpPitch - delta.y * 0.2f, -70f, 70f);
+        }
+
+        bool FpBlocked(Vector3 p)
+        {
+            foreach (var m in modules)
+            {
+                if (m == null) continue;
+                var mn = m.Min; var sz = m.Size;
+                if (p.x > mn.x - 0.3f && p.x < mn.x + sz.x + 0.3f && p.z > mn.y - 0.3f && p.z < mn.y + sz.y + 0.3f) return true;
+            }
+            return false;
+        }
+
+        // 1인칭: WASD 걷기 (Shift 달리기), 오른쪽 끌기 · 여백 끌기로 둘러보기, Q/E 돌기, Esc 나가기
+        void FirstPersonControls(LayoutInput i, float dt)
+        {
+            if (i.esc) { ExitCamera(); return; }
+            if (i.rHeld) FpLook(i.mouseDelta);
+            if (!HudInput.Typing)
+            {
+                if (i.q) fpYaw -= 90f * dt; if (i.e) fpYaw += 90f * dt;
+                var f = Quaternion.Euler(0, fpYaw, 0) * Vector3.forward; var r = Quaternion.Euler(0, fpYaw, 0) * Vector3.right;
+                var mv = Vector3.zero;
+                if (i.w) mv += f; if (i.s) mv -= f; if (i.d) mv += r; if (i.a) mv -= r;
+                if (mv.sqrMagnitude > 0.01f)
+                {
+                    var np = fpPos + mv.normalized * (i.shift ? 9f : 4f) * dt;
+                    np.x = Mathf.Clamp(np.x, FloorX0, FloorX0 + floorW); np.z = Mathf.Clamp(np.z, FloorZ0, FloorZ0 + floorD);
+                    if (!FpBlocked(np)) fpPos = np;
+                    else if (!FpBlocked(new Vector3(np.x, fpPos.y, fpPos.z))) fpPos.x = np.x;   // 벽 따라 미끄러지기
+                    else if (!FpBlocked(new Vector3(fpPos.x, fpPos.y, np.z))) fpPos.z = np.z;
+                }
+            }
+            fpPos.y = Mathf.Lerp(fpPos.y, GroundH(fpPos) + EyeH, 1f - Mathf.Exp(-10f * dt));   // 바닥 높이가 바뀌면 부드럽게
+            cam.transform.SetPositionAndRotation(fpPos, Quaternion.Euler(fpPitch, fpYaw, 0));
+        }
+
+        // 추적: 대상을 가운데 두고 따라감. 오른쪽 끌기 회전, 휠 거리, Esc 나가기
+        void FollowControls(LayoutInput i, bool overUi, float dt)
+        {
+            if (followT == null) { ExitCamera(); Notice?.Invoke("추적하던 대상이 사라져 추적을 끝냈습니다"); return; }
+            if (i.esc) { ExitCamera(); return; }
+            if (i.rHeld) { yaw += i.mouseDelta.x * 0.25f; pitch = Mathf.Clamp(pitch - i.mouseDelta.y * 0.2f, 5f, 88f); }
+            if (!HudInput.Typing) { if (i.q) yaw += 70f * dt; if (i.e) yaw -= 70f * dt; }
+            if (!overUi && Mathf.Abs(i.scroll) > 0.001f) dist = Mathf.Clamp(dist * Mathf.Pow(0.85f, i.scroll), 3f, 80f);
+            var tp = followT.position + Vector3.up * 1.2f;
+            focus = Vector3.Lerp(focus, tp, 1f - Mathf.Exp(-8f * dt));
+            UpdateCamera(false);
+        }
+
         void CameraControls(LayoutInput i, bool overUi)
         {
             float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+            if (CameraMode == CamMode.FirstPerson) { FirstPersonControls(i, dt); return; }
+            if (CameraMode == CamMode.Follow) { FollowControls(i, overUi, dt); return; }
             if (!HudInput.Typing)
             {
                 var fwd = Quaternion.Euler(0, yaw, 0) * Vector3.forward; var right = Quaternion.Euler(0, yaw, 0) * Vector3.right;
@@ -703,6 +925,11 @@ namespace EquipFX
         public bool BeginDrag(EquipEntry e)
         {
             if (!CanHandle(e)) return false;
+            if (!CanAfford(EquipCatalog.PriceOf(e)))
+            {
+                Notice?.Invoke($"잔고가 부족합니다. {e.name}: {EquipCatalog.Money(EquipCatalog.PriceOf(e))} 필요, 잔고 {EquipCatalog.Money(Traffic.balance)}");
+                return true;   // 끌기는 시작하지 않음 (안내만)
+            }
             dragEntry = e; dragStartMouse = LayoutInput.Read().mouse;
             return true;
         }
@@ -740,7 +967,7 @@ namespace EquipFX
         {
             var size = SizeOf(e);
             var c = new Vector2(focus.x - size.x / 2, focus.z - size.y / 2);
-            if (FindFree(c, size, null, out var min)) Place(e, min, null);
+            if (FindFree(c, size, null, out var min) && Pay(EquipCatalog.PriceOf(e), e.name)) Place(e, min, null);
         }
 
         // start 근처에서 나선형으로 빈자리 찾기 (건물 안, 다른 설비·도크와 겹치지 않는 곳)
@@ -830,6 +1057,7 @@ namespace EquipFX
         public void Remove(PlacedModule m)
         {
             if (m == null) return;
+            Refund(EquipCatalog.PriceOf(m.entry), m.entry.name);
             modules.Remove(m);
             if (Selected == m) Select(null);
             Destroy(m.gameObject);
@@ -839,7 +1067,9 @@ namespace EquipFX
 
         public void ClearAll()
         {
-            foreach (var m in modules) if (m != null) Destroy(m.gameObject);
+            int back = 0;
+            foreach (var m in modules) if (m != null) { back += EquipCatalog.PriceOf(m.entry); Destroy(m.gameObject); }
+            if (back > 0) Refund(back, "설비 전부");
             modules.Clear(); Select(null);
             Save(); LayoutChanged?.Invoke();
         }
@@ -991,6 +1221,9 @@ namespace EquipFX
             s.cargo = (int)Cargo;
             s.site = Site;
             foreach (var mv in Traffic.movers) s.movers.Add(new MoverSave { kind = mv.kind, x = mv.t.position.x, z = mv.t.position.z });
+            s.moversGiven = moversGiven;
+            s.unlimited = Unlimited;
+            s.balance = Traffic.balance; s.fundsInit = true;
             PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(s));
             PlayerPrefs.Save();
         }
@@ -1008,6 +1241,9 @@ namespace EquipFX
             if (s.site != null && s.site.w >= Plan.MinSize && s.site.d >= Plan.MinSize) { Site = s.site; if (Site.doors == null) Site.doors = new List<DoorDef>(); if (Site.doors.Count == 0) Plan.DefaultDoors(Site); }
             for (int i = 0; i < s.sizeIds.Count && i < s.sizes.Count; i++) sizeCache[s.sizeIds[i]] = s.sizes[i];
             if (s.movers != null) foreach (var mv in s.movers) Traffic.AddMover(mv.kind, new Vector3(mv.x, FloorY, mv.z));
+            moversGiven = s.moversGiven || (s.movers != null && s.movers.Count > 0);
+            Unlimited = s.unlimited;
+            Traffic.balance = s.fundsInit ? s.balance : StartCapital;
             foreach (var it in s.items)
             {
                 var e = EquipCatalog.All.Find(x => x.id == it.id);

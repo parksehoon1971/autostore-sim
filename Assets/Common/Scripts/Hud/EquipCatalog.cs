@@ -107,6 +107,30 @@ namespace EquipFX
             "libiao" or "tsorter" => Groups[2],
             _ => Groups[3],
         };
+        // 자금 모드 구매비 (만원). 실제 견적이 아니라 게임용 대략값
+        public static int PriceOf(EquipEntry e) => e.id switch
+        {
+            "autostore" => 250000,
+            "stacker" => 200000,
+            "skypod" => 150000,
+            "shuttle" => 150000,
+            "rapyuta" => 120000,
+            "haipick" => 100000,
+            "airrob" => 80000,
+            "carousel" => 60000,
+            "libiao" => 50000,
+            "tsorter" => 40000,
+            "caseline" => 30000,
+            _ => 50000,
+        };
+
+        // 만원 단위 금액을 읽기 쉽게 (1억 이상은 억원)
+        public static string Money(int man)
+        {
+            if (Math.Abs(man) >= 10000) return (man / 10000f).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "억원";
+            return man.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "만원";
+        }
+
         public static List<EquipEntry> All => all ??= Build();
 
         public static EquipEntry Find(Component view)
