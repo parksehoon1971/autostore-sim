@@ -104,7 +104,10 @@ namespace EquipFX
         MfdView mfd;
         Label mfdSummary;
         Button tab3dBtn, tabMfdBtn;
-        bool mfdOn, overMfd;
+        bool mfdOn, overMfd, cadOn;
+        VisualElement cadPanel;
+        CadView cad;
+        Button tabCadBtn;
         string mfdSig;
         VisualElement siteBanner, siteBox;
         Label siteBannerLbl, paramTitle;
@@ -790,8 +793,10 @@ namespace EquipFX
             tab3dBtn = HudStyle.MakeButton("3D", () => SetMfd(false));
             tab3dBtn.tooltip = "3D 배치 화면";
             tabMfdBtn = HudStyle.MakeButton("물류흐름도", () => SetMfd(true));
+            tabCadBtn = HudStyle.MakeButton("CAD", () => SetView(2));
+            tabCadBtn.tooltip = "지금 배치를 위에서 본 2D 도면";
             tabMfdBtn.tooltip = "놓은 출입문 · 하역 수단 · 설비로 자동으로 만든 물류흐름도(MFD)";
-            layoutTools.Add(tab3dBtn); layoutTools.Add(tabMfdBtn);
+            layoutTools.Add(tab3dBtn); layoutTools.Add(tabMfdBtn); layoutTools.Add(tabCadBtn);
             layoutTools.Add(Gap(8));
             cargoChip = HudStyle.MakeButton("화물", ShowCargoModal);
             cargoChip.tooltip = "물류센터가 다루는 화물 바꾸기";
@@ -1293,7 +1298,7 @@ namespace EquipFX
             animTools.style.display = LayoutMode ? DisplayStyle.None : DisplayStyle.Flex;
             layoutTools.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
             plantBox.style.display = LayoutMode ? DisplayStyle.Flex : DisplayStyle.None;
-            if (!LayoutMode && mfdOn) SetMfd(false);
+            if (!LayoutMode && (mfdOn || cadOn)) SetMfd(false);
             UpdateMfdTabs();
             HudStyle.SetOn(modeLayoutBtn, LayoutMode);
             HudStyle.SetOn(modeAnimBtn, !LayoutMode && entry != null);
@@ -1331,8 +1336,9 @@ namespace EquipFX
             if (!captionsOn && !LayoutMode) SetCaptions(false);
             if (!LayoutMode && !marksSet && clockStart >= 0) RefreshTimelineMarks();
             if (LayoutMode) UpdatePlant();
-            if (mfdOn && world != null && world.DrawingSite) SetMfd(false);
+            if ((mfdOn || cadOn) && world != null && world.DrawingSite) SetMfd(false);
             if (mfdOn) UpdateMfd();
+            if (cadOn && cad != null && world != null) { if (!cad.Bound) cad.Bind(world); cad.Refresh(); }
             if (siteDirty && !HudInput.Typing) { siteDirty = false; if (SiteSelected) RebuildSiteBox(); }
             if (world != null && world.SelectedMover != null && siteBox != null)
             {
@@ -1383,24 +1389,49 @@ namespace EquipFX
             mfdPanel.Add(mfd);
             host.Add(mfdPanel);
             Hover(mfdPanel, b => overMfd = b);
+
+            // CAD 도면
+            cadPanel = Panel();
+            cadPanel.style.flexGrow = 1; HudStyle.Margin(cadPanel, 0, 10, 0, 10); HudStyle.Pad(cadPanel, 14, 16);
+            cadPanel.style.display = cadOn ? DisplayStyle.Flex : DisplayStyle.None;
+            var ch = Row();
+            ch.Add(HudStyle.MakeLabel("CAD 도면", 15, HudStyle.Strong, true)); ch.Add(Gap(12));
+            var chint = HudStyle.MakeLabel("위가 북쪽 · 휠 확대 · 끌어서 이동 · 설비를 누르면 선택 · 배치가 바뀌면 자동으로 다시 그림", 12, HudStyle.Muted);
+            chint.style.flexGrow = 1; chint.style.overflow = Overflow.Hidden; chint.style.textOverflow = TextOverflow.Ellipsis;
+            ch.Add(chint);
+            ch.Add(HudStyle.MakeButton("맞춤", () => { cad?.Fit(); cad?.Refresh(); }));
+            cadPanel.Add(ch);
+            cad = new CadView();
+            HudStyle.Margin(cad, 8, 0, 0, 0);
+            cad.style.backgroundColor = HudStyle.Dark ? new Color(0.07f, 0.08f, 0.10f, 1f) : new Color(0.98f, 0.98f, 0.97f, 1f);
+            HudStyle.Radius(cad, 10);
+            cad.clicked = m => world?.Select(m);
+            cadPanel.Add(cad);
+            host.Add(cadPanel);
+            Hover(cadPanel, b => overMfd = b);
         }
 
-        void SetMfd(bool on)
+        void SetMfd(bool on) => SetView(on ? 1 : 0);
+
+        // 메인 화면: 0 3D, 1 물류흐름도, 2 CAD 도면
+        void SetView(int v)
         {
-            if (on && (!LayoutMode || world == null)) return;
-            if (on && world.DrawingSite) { Toast("센터 영역을 먼저 정하세요"); return; }
-            mfdOn = on;
-            if (mfdPanel != null) mfdPanel.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
-            if (!on) { overMfd = false; UpdOver(); }
-            else { mfdSig = null; UpdateMfd(); }
+            if (v != 0 && (!LayoutMode || world == null)) return;
+            if (v != 0 && world.DrawingSite) { Toast("센터 영역을 먼저 정하세요"); return; }
+            mfdOn = v == 1; cadOn = v == 2;
+            if (mfdPanel != null) mfdPanel.style.display = mfdOn ? DisplayStyle.Flex : DisplayStyle.None;
+            if (cadPanel != null) cadPanel.style.display = cadOn ? DisplayStyle.Flex : DisplayStyle.None;
+            if (v == 0) { overMfd = false; UpdOver(); }
+            if (mfdOn) { mfdSig = null; UpdateMfd(); }
+            if (cadOn && cad != null) { cad.Bind(world); }
             UpdateMfdTabs();
         }
 
         void UpdateMfdTabs()
         {
-            if (dashPanel != null) dashPanel.style.display = mfdOn ? DisplayStyle.None : DisplayStyle.Flex;
+            if (dashPanel != null) dashPanel.style.display = mfdOn || cadOn ? DisplayStyle.None : DisplayStyle.Flex;
             if (tab3dBtn == null) return;
-            HudStyle.SetOn(tab3dBtn, !mfdOn); HudStyle.SetOn(tabMfdBtn, mfdOn);
+            HudStyle.SetOn(tab3dBtn, !mfdOn && !cadOn); HudStyle.SetOn(tabMfdBtn, mfdOn); HudStyle.SetOn(tabCadBtn, cadOn);
         }
 
         static string BayStatus(Traffic tr, int door)
