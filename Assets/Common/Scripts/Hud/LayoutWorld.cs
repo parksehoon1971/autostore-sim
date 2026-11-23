@@ -499,10 +499,10 @@ namespace EquipFX
         public void BeginSiteDrawing()
         {
             DrawingSite = true; siteDragging = false; dragEntry = null;
-            ExitCamera();
-            Select(null);
             ghost.Hide();
-            DrawingChanged?.Invoke();
+            DrawingChanged?.Invoke();   // 안내 배너가 먼저 뜨도록 (아래에서 예외가 나도 그리기 안내는 보임)
+            try { ExitCamera(); Select(null); }
+            catch (Exception ex) { Debug.LogException(ex); }
         }
 
         public void EndSiteDrawing(bool useDefault)
@@ -531,6 +531,7 @@ namespace EquipFX
                 if (inp.lUp)
                 {
                     siteDragging = false; ghost.Hide();
+                    if (!ok) Notice?.Invoke($"영역이 너무 작습니다 ({r.width:0} × {r.height:0} m). 최소 {Plan.MinSize:0} × {Plan.MinSize:0} m 이상 끌어 주세요. 휠로 축소하면 넓게 그릴 수 있습니다.");
                     if (ok)
                     {
                         var s = Site.Clone(); s.x = r.x; s.z = r.y; s.w = r.width; s.d = r.height; s.drawn = true;
