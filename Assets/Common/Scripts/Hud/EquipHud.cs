@@ -287,6 +287,8 @@ namespace EquipFX
 
             HudInput.Typing = TypingInField();
             HandleKeys();
+            HudInput.PointerOverUi = PickOverUi(out overWhat) || (cargoModal != null && cargoModal.resolvedStyle.display == DisplayStyle.Flex);   // 이벤트로 켜고 끄는 대신 매 프레임 실제 위치로 확인
+            UpdateInputDebug();
 
             if (LayoutMode)
             {
@@ -693,12 +695,84 @@ namespace EquipFX
             e.RegisterCallback<PointerLeaveEvent>(_ => { set(false); Upd(); });
         }
 
+        // ---------------------------------------------------------------- 마우스가 HUD 위에 있는지
+        // 들어옴/나감 이벤트는 요소가 숨겨지거나 화면 배율이 다르면 빠질 수 있어 굳어 버림 → 매 프레임 그 자리 요소를 직접 확인
+        string overWhat;
+        Label inputDebugLbl;
+        bool inputDebug;
+
+        static bool ScreenMouse(out Vector2 sp, out string device, out bool l, out bool r, out bool m)
+        {
+            sp = Vector2.zero; device = "없음"; l = r = m = false;
+#if ENABLE_INPUT_SYSTEM
+            var ms = Mouse.current;
+            if (ms != null) { sp = ms.position.ReadValue(); device = ms.displayName ?? "Mouse"; l = ms.leftButton.isPressed; r = ms.rightButton.isPressed; m = ms.middleButton.isPressed; return true; }
+            var pt = Pointer.current;
+            if (pt != null) { sp = pt.position.ReadValue(); device = pt.displayName ?? "Pointer"; l = pt.press.isPressed; return true; }
+            return false;
+#else
+            sp = Input.mousePosition; device = "Input Manager"; l = Input.GetMouseButton(0); r = Input.GetMouseButton(1); m = Input.GetMouseButton(2);
+            return true;
+#endif
+        }
+
+        bool PickOverUi(out string what)
+        {
+            what = null;
+            if (root == null || root.panel == null || !hudVisible || root.resolvedStyle.display == DisplayStyle.None) return false;
+            if (!ScreenMouse(out var sp, out _, out _, out _, out _)) return false;
+            if (float.IsNaN(sp.x) || float.IsInfinity(sp.x)) return false;
+            var pp = RuntimePanelUtils.ScreenToPanel(root.panel, new Vector2(sp.x, Screen.height - sp.y));
+            var e = root.panel.Pick(pp);
+            for (var x = e; x != null; x = x.parent)
+                if (x.ClassListContains(HudStyle.BlockClass)) { what = string.IsNullOrEmpty(x.name) ? x.GetType().Name : x.name; return true; }
+            return false;
+        }
+
+        // F3: 입력 진단 (장치 · 위치 · 버튼 · HUD 위 여부 · 화면 크기). 다른 PC 에서 마우스가 안 될 때 확인용
+        void UpdateInputDebug()
+        {
+            bool f3;
+#if ENABLE_INPUT_SYSTEM
+            f3 = Keyboard.current != null && Keyboard.current.f3Key.wasPressedThisFrame;
+#else
+            f3 = Input.GetKeyDown(KeyCode.F3);
+#endif
+            if (f3) inputDebug = !inputDebug;
+            if (root == null) return;
+            if (inputDebugLbl == null || inputDebugLbl.parent != root)
+            {
+                inputDebugLbl = HudStyle.MakeLabel("", 11, Color.white);
+                inputDebugLbl.pickingMode = PickingMode.Ignore;
+                inputDebugLbl.style.position = Position.Absolute; inputDebugLbl.style.left = 12; inputDebugLbl.style.bottom = 12;
+                inputDebugLbl.style.backgroundColor = new Color(0, 0, 0, 0.75f); HudStyle.Pad(inputDebugLbl, 6, 10); HudStyle.Radius(inputDebugLbl, 8);
+                inputDebugLbl.style.whiteSpace = WhiteSpace.Normal; inputDebugLbl.style.maxWidth = 640;
+                root.Add(inputDebugLbl);
+            }
+            inputDebugLbl.style.display = inputDebug ? DisplayStyle.Flex : DisplayStyle.None;
+            if (!inputDebug) return;
+            bool has = ScreenMouse(out var sp, out var dev, out bool l, out bool r, out bool m);
+            string mode;
+#if ENABLE_INPUT_SYSTEM && ENABLE_LEGACY_INPUT_MANAGER
+            mode = "둘 다 (Both)";
+#elif ENABLE_INPUT_SYSTEM
+            mode = "Input System";
+#else
+            mode = "Input Manager";
+#endif
+            inputDebugLbl.text = $"[F3 입력 진단]  장치: {(has ? dev : "마우스 없음")}  ·  위치 {sp.x:0},{sp.y:0}  ·  버튼 좌 {(l ? "●" : "○")} 우 {(r ? "●" : "○")} 가운데 {(m ? "●" : "○")}\n"
+                + $"HUD 위: {(HudInput.PointerOverUi ? "예 (" + overWhat + ")" : "아니오")}  ·  입력 중: {(HudInput.Typing ? "예" : "아니오")}  ·  배치 모드: {(LayoutMode ? "예" : "아니오")}"
+                + $"  ·  화면 {Screen.width}×{Screen.height}  ·  DPI {Screen.dpi:0}  ·  입력 처리: {mode}  ·  timeScale {Time.timeScale:0.##}"
+                + (world != null ? $"  ·  카메라 {world.CameraMode}  ·  센터 그리는 중: {(world.DrawingSite ? "예" : "아니오")}" : "");
+        }
+
         void UpdOver() => HudInput.PointerOverUi = overTop || overLeft || overDash || overRight || overPopup || overModal || overBanner || overMfd;
 
         static VisualElement Panel()
         {
             var p = new VisualElement();
             p.style.backgroundColor = HudStyle.Panel; HudStyle.Radius(p, 14);
+            p.AddToClassList(HudStyle.BlockClass);
             return p;
         }
 
@@ -1768,6 +1842,7 @@ namespace EquipFX
         void BuildSiteBanner()
         {
             siteBanner = new VisualElement();
+            siteBanner.AddToClassList(HudStyle.BlockClass);
             siteBanner.style.position = Position.Absolute; siteBanner.style.top = 80; siteBanner.style.alignSelf = Align.Center;
             siteBanner.style.flexDirection = FlexDirection.Row; siteBanner.style.alignItems = Align.Center;
             siteBanner.style.backgroundColor = HudStyle.Panel; HudStyle.Radius(siteBanner, 14); HudStyle.Pad(siteBanner, 10, 16);
@@ -1952,6 +2027,7 @@ namespace EquipFX
         void BuildCargoModal()
         {
             cargoModal = new VisualElement();
+            cargoModal.AddToClassList(HudStyle.BlockClass);
             cargoModal.style.position = Position.Absolute; cargoModal.style.left = 0; cargoModal.style.right = 0; cargoModal.style.top = 0; cargoModal.style.bottom = 0;
             cargoModal.style.backgroundColor = new Color(0, 0, 0, HudStyle.Dark ? 0.55f : 0.30f);
             cargoModal.style.alignItems = Align.Center; cargoModal.style.justifyContent = Justify.Center;
@@ -1961,13 +2037,18 @@ namespace EquipFX
             var card = new VisualElement();
             card.style.backgroundColor = HudStyle.Dark ? new Color(0.09f, 0.10f, 0.12f, 0.98f) : new Color(1, 1, 1, 0.99f);
             HudStyle.Radius(card, 18); HudStyle.Pad(card, 26, 28); card.style.maxWidth = 920;
+            card.style.maxHeight = Length.Percent(92); HudStyle.Margin(card, 0, 16, 0, 16);
             var t = HudStyle.MakeLabel("어떤 화물을 다루는 물류센터인가요?", 22, HudStyle.Strong, true);
             var st = HudStyle.MakeLabel("화물에 맞는 설비만 설치할 수 있습니다. 입고·출고 도크와 동선도 이 화물 기준으로 표시됩니다. 나중에 위쪽 막대의 화물 단추로 바꿀 수 있습니다.", 13, HudStyle.Muted);
             st.style.whiteSpace = WhiteSpace.Normal; HudStyle.Margin(st, 6, 0, 18, 0);
             card.Add(t); card.Add(st);
+            // 화면이 낮아도 아래 '시작' 단추가 가려지지 않게: 화물 칸은 스크롤 영역
+            var tileScroll = HudStyle.MakeScroll();
+            tileScroll.style.flexShrink = 1; tileScroll.style.flexGrow = 0;
             cargoTiles = new VisualElement { pickingMode = PickingMode.Ignore };
             cargoTiles.style.flexDirection = FlexDirection.Row; cargoTiles.style.flexWrap = Wrap.Wrap;
-            card.Add(cargoTiles);
+            tileScroll.Add(cargoTiles);
+            card.Add(tileScroll);
             // 게임 모드
             var mt = HudStyle.MakeLabel("게임 모드", 15, HudStyle.Strong, true); HudStyle.Margin(mt, 14, 0, 8, 0);
             card.Add(mt);

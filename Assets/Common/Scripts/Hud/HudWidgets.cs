@@ -12,6 +12,8 @@ namespace EquipFX
     {
         public const string PrefTheme = "EquipFX.Hud.Theme";   // 0 다크, 1 라이트
         public static bool Dark = true;
+        // 이 클래스가 붙은 요소(패널 · 팝업 · 모달) 위에서는 3D 장면 마우스 조작을 하지 않음
+        public const string BlockClass = "hud-block";
 
         static Color C(int rgb, float a = 1f) => new Color(((rgb >> 16) & 255) / 255f, ((rgb >> 8) & 255) / 255f, (rgb & 255) / 255f, a);
 
@@ -276,10 +278,12 @@ namespace EquipFX
             catcher = new VisualElement();
             catcher.style.position = Position.Absolute; catcher.style.left = 0; catcher.style.right = 0; catcher.style.top = 0; catcher.style.bottom = 0;
             catcher.RegisterCallback<PointerDownEvent>(ev => { Close(); ev.StopPropagation(); });
+            catcher.AddToClassList(HudStyle.BlockClass);
             h.Add(catcher);
 
             popup = new VisualElement();
             popup.style.position = Position.Absolute;
+            popup.AddToClassList(HudStyle.BlockClass);
             var wb = worldBound; var hb = h.worldBound;
             popup.style.left = wb.xMin - hb.xMin; popup.style.top = wb.yMax - hb.yMin + 6;
             popup.style.minWidth = wb.width;
