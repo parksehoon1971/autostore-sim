@@ -707,7 +707,7 @@ namespace EquipFX
 #if ENABLE_INPUT_SYSTEM
             var ms = Mouse.current;
             if (ms != null) { sp = ms.position.ReadValue(); device = ms.displayName ?? "Mouse"; l = ms.leftButton.isPressed; r = ms.rightButton.isPressed; m = ms.middleButton.isPressed; return true; }
-            var pt = Pointer.current;
+            var pt = UnityEngine.InputSystem.Pointer.current;
             if (pt != null) { sp = pt.position.ReadValue(); device = pt.displayName ?? "Pointer"; l = pt.press.isPressed; return true; }
             return false;
 #else
