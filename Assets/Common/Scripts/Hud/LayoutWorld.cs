@@ -105,6 +105,15 @@ namespace EquipFX
                 i.lDown = m.leftButton.wasPressedThisFrame; i.lHeld = m.leftButton.isPressed; i.lUp = m.leftButton.wasReleasedThisFrame;
                 i.rHeld = m.rightButton.isPressed; i.mHeld = m.middleButton.isPressed;
             }
+            else
+            {
+                var pt = Pointer.current;   // touch screens / pens with no Mouse device
+                if (pt != null)
+                {
+                    i.mouse = pt.position.ReadValue(); i.mouseDelta = pt.delta.ReadValue();
+                    i.lDown = pt.press.wasPressedThisFrame; i.lHeld = pt.press.isPressed; i.lUp = pt.press.wasReleasedThisFrame;
+                }
+            }
             if (k != null)
             {
                 i.del = k.deleteKey.wasPressedThisFrame || k.backspaceKey.wasPressedThisFrame; i.esc = k.escapeKey.wasPressedThisFrame;
