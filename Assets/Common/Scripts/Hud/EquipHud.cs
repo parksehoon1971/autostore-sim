@@ -1420,6 +1420,15 @@ namespace EquipFX
 
         void UpdateUiFast()
         {
+            // 센터 그리기 안내 배너: 이벤트를 놓쳐도 실제 상태에 맞춤
+            if (siteBanner != null)
+            {
+                bool drawing = world != null && world.DrawingSite;
+                if ((siteBanner.resolvedStyle.display == DisplayStyle.Flex) != drawing)
+                {
+                    if (world != null) OnDrawingChanged(); else siteBanner.style.display = DisplayStyle.None;
+                }
+            }
             if (!LayoutMode && timeline != null)
             {
                 timeline.SetValue(Mathf.Min(Elapsed, MovieLength));
