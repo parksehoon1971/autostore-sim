@@ -143,7 +143,7 @@ namespace EquipFX
         internal static Material Mat(string name, Color c, float smooth, float metal = 0f)
         {
             if (mats.TryGetValue(name, out var m) && m != null) return m;
-            m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };
+            m = new Material(HudShaders.Lit) { name = name };
             m.SetColor("_BaseColor", c); m.SetFloat("_Smoothness", smooth); m.SetFloat("_Metallic", metal);
             mats[name] = m;
             return m;

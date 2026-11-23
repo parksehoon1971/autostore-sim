@@ -326,7 +326,7 @@ namespace EquipFX
             mesh = new Mesh { name = name, indexFormat = IndexFormat.UInt32 };
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
-            mat = new Material(Shader.Find("Universal Render Pipeline/Unlit")) { name = name };
+            mat = new Material(HudShaders.Unlit) { name = name };
             mat.SetColor("_BaseColor", c);
             if (tex != null) mat.SetTexture("_BaseMap", tex);
             r.sharedMaterial = mat; r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
@@ -400,11 +400,11 @@ namespace EquipFX
             slab = GameObject.CreatePrimitive(PrimitiveType.Cube); slab.name = "CenterSlab";
             Object.Destroy(slab.GetComponent<Collider>());
             slab.transform.SetParent(root, false);
-            slabMat = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = "Slab" };
+            slabMat = new Material(HudShaders.Lit) { name = "Slab" };
             slabMat.SetColor("_BaseColor", new Color(0.93f, 0.93f, 0.92f)); slabMat.SetFloat("_Smoothness", 0.3f);
             if (gridTex != null) slabMat.SetTexture("_BaseMap", gridTex);
             slab.GetComponent<MeshRenderer>().sharedMaterial = slabMat;
-            edgeMat = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = "SlabEdge" };
+            edgeMat = new Material(HudShaders.Lit) { name = "SlabEdge" };
             edgeMat.SetColor("_BaseColor", new Color(0.55f, 0.56f, 0.58f));
 
             var ink = new Color(0.20f, 0.22f, 0.26f);
@@ -832,7 +832,7 @@ namespace EquipFX
         static Material Mat(string name, Color c, float smooth, float metal = 0f)
         {
             if (mats.TryGetValue(name, out var m)) return m;
-            m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };
+            m = new Material(HudShaders.Lit) { name = name };
             m.SetColor("_BaseColor", c); m.SetFloat("_Smoothness", smooth); m.SetFloat("_Metallic", metal);
             mats[name] = m;
             return m;
