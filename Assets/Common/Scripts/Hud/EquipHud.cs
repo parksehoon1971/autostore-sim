@@ -1404,11 +1404,17 @@ namespace EquipFX
             var head = Row();
             var t = HudStyle.MakeLabel("물류흐름도", 15, HudStyle.Strong, true);
             head.Add(t); head.Add(Gap(12));
+            head.Add(HudStyle.MakeLabel("관찰 시간", 12, HudStyle.Muted)); head.Add(Gap(6));
+            periodDd = new HudDropdown(new List<string>(PeriodNames), mfdPeriod, 130, i => { mfdPeriod = i; UpdateMfd(); }, () => root);
+            periodDd.popupOpenChanged = b => { overPopup = b; UpdOver(); };
+            periodDd.tooltip = "화살표의 예상 물동량을 이 시간 기준으로 보여 줍니다";
+            head.Add(periodDd); head.Add(Gap(12));
             mfdSummary = HudStyle.MakeLabel("", 12, HudStyle.Muted);
             mfdSummary.style.flexGrow = 1;
             head.Add(mfdSummary);
             mfdPanel.Add(head);
-            var legend = HudStyle.MakeLabel("하차 → 검수 → 평치 보관(또는 설비) → 출고장 → 상차 · 점선은 수단이 없어 멈춘 흐름 · 흐린 상자는 흐름에 참여하지 않음 · 상자를 누르면 선택", 11, HudStyle.Muted);
+            var legend = HudStyle.MakeLabel("화살표: 화물 종류 · 예상 물동량(집계 시작부터 처리한 수를 관찰 시간으로 늘린 값, 게임 시간 기준, 첫 1분은 측정 중) · 점선은 수단이 없어 멈춘 흐름 · 흐린 상자는 흐름에 참여하지 않음 · 상자를 누르면 선택", 11, HudStyle.Muted);
+            legend.style.whiteSpace = WhiteSpace.Normal;
             HudStyle.Margin(legend, 4, 0, 0, 0);
             mfdPanel.Add(legend);
             mfd = new MfdView();
@@ -1558,17 +1564,17 @@ namespace EquipFX
                 ns.Add(new MfdNode { id = "pick", col = 5, title = "출고장", sub = PickSub(tr), color = outC });
                 ns.Add(new MfdNode { id = "load", col = 6, title = "상차 (출고)", sub = moverText, color = outC, dim = !anyMover });
                 ns.Add(new MfdNode { id = "exit", col = 8, title = "출고 지점", sub = "화주 출고", color = outC });
-                es.Add(new MfdEdge { a = "unload", b = "qc", color = inC, dashed = !anyMover });
-                es.Add(new MfdEdge { a = "qc", b = "bulk", color = qcC, dashed = !HasWorker(tr) });
-                es.Add(new MfdEdge { a = "bulk", b = "pick", color = bulkC });
-                es.Add(new MfdEdge { a = "pick", b = "load", color = outC, dashed = !anyMover });
+                es.Add(new MfdEdge { a = "unload", b = "qc", color = inC, dashed = !anyMover, label = "" });
+                es.Add(new MfdEdge { a = "qc", b = "bulk", color = qcC, dashed = !HasWorker(tr), label = "" });
+                es.Add(new MfdEdge { a = "bulk", b = "pick", color = bulkC, label = "" });
+                es.Add(new MfdEdge { a = "pick", b = "load", color = outC, dashed = !anyMover, label = "" });
                 for (int i = 0; i < s.doors.Count; i++)
                 {
                     var d = s.doors[i]; string id = "door" + i;
                     bool inbound = d.kind == 0;
                     ns.Add(new MfdNode { id = id, col = inbound ? 1 : 7, title = Plan.DoorName(s, i), sub = BayStatus(tr, i), color = inbound ? inC : outC });
-                    if (inbound) { es.Add(new MfdEdge { a = "gate", b = id, color = inC }); es.Add(new MfdEdge { a = id, b = "unload", color = inC, dashed = !anyMover }); }
-                    else { es.Add(new MfdEdge { a = "load", b = id, color = outC, dashed = !anyMover }); es.Add(new MfdEdge { a = id, b = "exit", color = outC }); }
+                    if (inbound) { es.Add(new MfdEdge { a = "gate", b = id, color = inC, label = "" }); es.Add(new MfdEdge { a = id, b = "unload", color = inC, dashed = !anyMover }); }
+                    else { es.Add(new MfdEdge { a = "load", b = id, color = outC, dashed = !anyMover }); es.Add(new MfdEdge { a = id, b = "exit", color = outC, label = "" }); }
                 }
                 for (int k = 0; k < world.modules.Count; k++)
                 {
@@ -1589,8 +1595,37 @@ namespace EquipFX
                 for (int i = 0; i < s.doors.Count; i++) mfd.SetSub("door" + i, BayStatus(tr, i));
                 for (int k = 0; k < world.modules.Count; k++) if (world.modules[k] != null) mfd.SetSub("mod" + k, ModuleSub(world.modules[k]));
             }
+            // 화살표: 화물 종류 · 관찰 시간당 예상 물동량
+            string ck = CargoInfo.Short(cargo);
+            mfd.SetEdgeLabel("unload", "qc", $"{ck} {Rate(tr, tr.sIn)}");
+            mfd.SetEdgeLabel("qc", "bulk", $"{ck} {Rate(tr, tr.sStore)}");
+            mfd.SetEdgeLabel("bulk", "pick", $"{ck} {Rate(tr, tr.sPick)}");
+            mfd.SetEdgeLabel("pick", "load", $"{ck} {Rate(tr, tr.sOut)}");
+            foreach (var b in tr.bays)
+            {
+                if (b.door >= s.doors.Count) continue;
+                if (b.inbound) mfd.SetEdgeLabel("gate", "door" + b.door, $"{ck} {Rate(tr, b.moved)}");
+                else mfd.SetEdgeLabel("door" + b.door, "exit", $"{ck} {Rate(tr, b.moved)}");
+            }
             if (mfdSummary != null)
-                mfdSummary.text = (world.Unlimited ? "무제한 모드" : $"잔고 {EquipCatalog.Money(tr.balance)}") + $" · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}";
+                mfdSummary.text = (world.Unlimited ? "무제한 모드" : $"잔고 {EquipCatalog.Money(tr.balance)}") + $" · 입고 처리 {tr.inDone} · 출고 처리 {tr.outDone} · 정시 {tr.onTime} · 마감 초과 {tr.missed} · 대기 트럭 {tr.TrucksWaiting}"
+                                 + $" · 집계 {(int)(tr.StatTime / 60)}분 {(int)(tr.StatTime % 60):00}초";
+        }
+
+        // 관찰 시간: 1시간 / 8시간(1교대) / 1일
+        static int mfdPeriod;
+        static readonly string[] PeriodNames = { "1시간", "8시간 (1교대)", "1일 (24시간)" };
+        static readonly string[] PeriodUnits = { "h", "8h", "일" };
+        static readonly float[] PeriodSecs = { 3600f, 8 * 3600f, 24 * 3600f };
+        HudDropdown periodDd;
+
+        // 집계 시작부터 처리한 수를 관찰 시간으로 늘려 본 예상 물동량 (게임 시간 기준)
+        static string Rate(Traffic tr, int count)
+        {
+            float t = tr.StatTime;
+            if (t < 60f) return "측정 중";
+            float v = count / t * PeriodSecs[mfdPeriod];
+            return $"{v.ToString("N0", CultureInfo.InvariantCulture)}개/{PeriodUnits[mfdPeriod]}";
         }
 
         void OnMfdClick(string id)
