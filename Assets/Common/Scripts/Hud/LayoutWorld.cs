@@ -265,7 +265,7 @@ namespace EquipFX
                     px[y * 512 + x] = b ? bold : f ? fine : bg;
                 }
             tex.SetPixels(px); tex.Apply(true);
-            floorMat = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = "LayoutFloor" };
+            floorMat = new Material(HudShaders.Lit) { name = "LayoutFloor" };
             floorMat.SetTexture("_BaseMap", tex); floorMat.SetColor("_BaseColor", Color.white);
             floorMat.SetTextureScale("_BaseMap", new Vector2(floorW / 10f, floorD / 10f));
             floorMat.SetFloat("_Smoothness", 0.25f);
@@ -1280,7 +1280,7 @@ namespace EquipFX
         public OutlineBox(string name, Transform parent)
         {
             root = new GameObject(name).transform; root.SetParent(parent, false);
-            mat = new Material(Shader.Find("Universal Render Pipeline/Unlit")) { name = name };
+            mat = new Material(HudShaders.Unlit) { name = name };
             for (int i = 0; i < 12; i++)
             {
                 var g = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -1323,7 +1323,7 @@ namespace EquipFX
         public FootprintFrame(string name, Transform parent)
         {
             root = new GameObject(name).transform; root.SetParent(parent, false);
-            mat = new Material(Shader.Find("Universal Render Pipeline/Unlit")) { name = name };
+            mat = new Material(HudShaders.Unlit) { name = name };
             for (int i = 0; i < 4; i++)
             {
                 var g = GameObject.CreatePrimitive(PrimitiveType.Cube);
