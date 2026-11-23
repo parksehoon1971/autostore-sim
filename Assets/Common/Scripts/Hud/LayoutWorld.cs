@@ -107,7 +107,7 @@ namespace EquipFX
             }
             else
             {
-                var pt = Pointer.current;   // touch screens / pens with no Mouse device
+                var pt = UnityEngine.InputSystem.Pointer.current;   // touch screens / pens with no Mouse device
                 if (pt != null)
                 {
                     i.mouse = pt.position.ReadValue(); i.mouseDelta = pt.delta.ReadValue();
