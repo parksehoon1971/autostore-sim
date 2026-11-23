@@ -19,6 +19,7 @@ namespace EquipFX
         public string a, b;
         public Color color;
         public bool dashed;
+        public string label;          // 화살표 가운데 글자 (화물 · 물동량)
     }
 
     public class MfdView : VisualElement
@@ -29,6 +30,7 @@ namespace EquipFX
         readonly List<MfdEdge> edges = new List<MfdEdge>();
         readonly Dictionary<string, VisualElement> boxes = new Dictionary<string, VisualElement>();
         readonly Dictionary<string, Label> subs = new Dictionary<string, Label>();
+        readonly Dictionary<string, Label> edgeLabels = new Dictionary<string, Label>();
         public System.Action<string> clicked;
 
         public MfdView()
@@ -42,7 +44,7 @@ namespace EquipFX
         {
             nodes.Clear(); nodes.AddRange(ns);
             edges.Clear(); edges.AddRange(es);
-            Clear(); boxes.Clear(); subs.Clear();
+            Clear(); boxes.Clear(); subs.Clear(); edgeLabels.Clear();
             foreach (var n in nodes)
             {
                 var b = new VisualElement();
@@ -65,7 +67,27 @@ namespace EquipFX
                 Add(b);
                 boxes[n.id] = b; subs[n.id] = s;
             }
+            // 화살표 글자는 상자 위에 오도록 나중에 추가
+            foreach (var e in edges)
+            {
+                if (e.label == null) continue;
+                var l = HudStyle.MakeLabel(e.label, 10, HudStyle.Text);
+                l.pickingMode = PickingMode.Ignore;
+                l.style.position = Position.Absolute;
+                l.style.translate = new Translate(Length.Percent(-50), Length.Percent(-50));
+                l.style.backgroundColor = HudStyle.Dark ? new Color(0.09f, 0.10f, 0.12f, 0.92f) : new Color(1f, 1f, 1f, 0.92f);
+                HudStyle.Pad(l, 1, 5); HudStyle.Radius(l, 6);
+                l.style.whiteSpace = WhiteSpace.NoWrap;
+                var c = e.color; c.a = 0.8f; HudStyle.Border(l, 1, c);
+                Add(l);
+                edgeLabels[e.a + ">" + e.b] = l;
+            }
             Arrange();
+        }
+
+        public void SetEdgeLabel(string a, string b, string text)
+        {
+            if (edgeLabels.TryGetValue(a + ">" + b, out var l) && l.text != text) l.text = text;
         }
 
         public void SetSub(string id, string text)
@@ -103,6 +125,16 @@ namespace EquipFX
                     b.style.width = nodeW; b.style.height = nodeH;
                     if (subs.TryGetValue(kv.Value[i].id, out var sl)) sl.style.display = showSub ? DisplayStyle.Flex : DisplayStyle.None;
                 }
+            }
+            // 화살표 가운데 (곡선의 중간점 = 두 열 사이 가운데, 두 상자 높이의 가운데)
+            foreach (var e in edges)
+            {
+                if (!edgeLabels.TryGetValue(e.a + ">" + e.b, out var l)) continue;
+                if (!boxes.TryGetValue(e.a, out var ba) || !boxes.TryGetValue(e.b, out var bb)) continue;
+                float ax = ba.style.left.value.value + nodeW, ay = ba.style.top.value.value + nodeH / 2;
+                float bx = bb.style.left.value.value, by = bb.style.top.value.value + nodeH / 2;
+                l.style.left = (ax + bx) / 2; l.style.top = (ay + by) / 2;
+                l.style.display = bx > ax + 20 ? DisplayStyle.Flex : DisplayStyle.None;
             }
             MarkDirtyRepaint();
         }

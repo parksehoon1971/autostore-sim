@@ -245,6 +245,7 @@ namespace EquipFX
         public bool late, noticed;
         public int Assigned;          // 트럭에서 일하는 하역 수단 수 (한 자리에 한 대)
         public int picking;           // 평치에서 출고장으로 옮기는 중인 수 (출고)
+        public int moved;             // 이 문으로 내리거나 실은 수 (집계 시작부터)
     }
 
     // ------------------------------------------------------------------ 센터 안 화물 자리 (입고 대기·검수 / 평치 / 출고장)
@@ -317,9 +318,15 @@ namespace EquipFX
                         Place(sl, u, s.h); sl.inspected = true; MarkInspected(u); n++;
                     }
             qcNoticed = stockNoticed = false;
+            statStart = clock; sIn = sQc = sStore = sPick = sOut = 0;
         }
 
         public int Stock { get { int n = 0; foreach (var z in zones) if (z.kind == 1) n += z.Units; return n; } }
+        // 물류흐름도 물동량 집계: 센터 배치가 바뀌면 새로 셈 (단계별 처리 수 / 경과 시간)
+        public float statStart;
+        public int sIn, sQc, sStore, sPick, sOut;
+        public float StatTime => clock - statStart;
+
         public int StockSlots { get { int n = 0; foreach (var z in zones) if (z.kind == 1) n += z.slots.Count; return n; } }
         public int AwaitingQc { get { int n = 0; foreach (var z in zones) if (z.kind == 0) foreach (var x in z.slots) if (x.unit != null && !x.inspected) n++; return n; } }
         public int InboundStaged { get { int n = 0; foreach (var z in zones) if (z.kind == 0) n += z.Units; return n; } }
@@ -665,7 +672,7 @@ namespace EquipFX
             foreach (var st in IntoSlot(m, sl)) yield return st;
             m.State = "검수 중";
             foreach (var st in Wait(InspectTime)) yield return st;
-            if (sl.unit != null && !sl.inspected) { sl.inspected = true; MarkInspected(sl.unit); inspected++; }
+            if (sl.unit != null && !sl.inspected) { sl.inspected = true; MarkInspected(sl.unit); inspected++; sQc++; }
             Unclaim(m, sl);
             foreach (var st in OutOfSlot(m, sl)) yield return st;
             foreach (var st in Go(m, z.entryB)) yield return st;
@@ -690,7 +697,7 @@ namespace EquipFX
             m.bay = null; b.Assigned--;
             foreach (var st in IntoSlot(m, sl)) yield return st;
             foreach (var st in Wait(0.8f)) yield return st;
-            if (m.load != null) { var lu = m.load; m.load = null; Place(sl, lu, hNow); sl.inspected = false; b.done++; inDone++; }
+            if (m.load != null) { var lu = m.load; m.load = null; Place(sl, lu, hNow); sl.inspected = false; b.done++; inDone++; sIn++; b.moved++; }
             Unclaim(m, sl);
             foreach (var st in OutOfSlot(m, sl)) yield return st;
             foreach (var st in Go(m, z.entryB)) yield return st;
@@ -713,7 +720,7 @@ namespace EquipFX
             foreach (var st in Go3(m, Approach(b, m))) yield return st;
             foreach (var st in Wait(0.8f)) yield return st;
             if (b.truck == null) { Release(m); yield break; }
-            if (m.load != null) { b.truck.Put(m.slotIdx, m.load); m.load = null; b.done++; outDone++; }
+            if (m.load != null) { b.truck.Put(m.slotIdx, m.load); m.load = null; b.done++; outDone++; sOut++; b.moved++; }
             b.truck.reserved[m.slotIdx] = false; m.slotIdx = -1;
             foreach (var st in Go(m, z.entryA, true)) yield return st;
             m.bay = null; b.Assigned--;
@@ -739,7 +746,7 @@ namespace EquipFX
             foreach (var st in Enter(m, zb)) yield return st;
             foreach (var st in IntoSlot(m, sb)) yield return st;
             foreach (var st in Wait(0.8f)) yield return st;
-            if (m.load != null) { var lu = m.load; m.load = null; Place(sb, lu, hNow); sb.inspected = ok; if (zb.kind == 1) stored++; }
+            if (m.load != null) { var lu = m.load; m.load = null; Place(sb, lu, hNow); sb.inspected = ok; if (zb.kind == 1) { stored++; sStore++; } else sPick++; }
             Unclaim(m, sb);
             if (m.pickFor != null) { m.pickFor.picking--; m.pickFor = null; }
             foreach (var st in OutOfSlot(m, sb)) yield return st;
